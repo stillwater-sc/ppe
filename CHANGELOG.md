@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `applications/layer_bandwidth` (#5): achieved read/write/copy bandwidth per
+  hierarchy layer -- L1d, L2, L3, DRAM, storage -- as named numbers rather than
+  a curve, in GB/s and bytes/cycle, single-thread and aggregate, with shared
+  levels dividing their working set between threads. Rows above 20% spread are
+  marked UNRESOLVED.
+
 - `blocking_study` now derives its block sizes from the detected cache
   hierarchy (`b = sqrt(S/24)` for a three-tile working set) instead of
   hardcoding them, annotates each block with the level it fits, and reports
