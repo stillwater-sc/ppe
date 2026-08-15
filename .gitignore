@@ -67,3 +67,11 @@ vcpkg_installed/
 # test output & cache
 Testing/
 .cache/
+
+# Rust / Cargo
+target/
+**/*.rs.bk
+
+# Cargo.lock: commit for binaries, ignore for libraries.
+# Uncomment if this repo only publishes library crates.
+#Cargo.lock
