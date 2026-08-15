@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Trace workstream**: `include/ppe/trace.hpp`, a header-only span recorder
+  exporting Chrome Trace Event Format (readable by Perfetto UI,
+  `chrome://tracing`, speedscope). No allocation or locks on the hot path,
+  bounded buffers with drops counted and reported, and provenance carried
+  inside the trace. Measured overhead 0.2 ns per span disabled, 32.3 ns
+  enabled. Wired into `memory_hierarchy --trace PATH`.
+
 ### Fixed
 
 - `memory_hierarchy` took its pointer-chase slot spacing from a hardcoded

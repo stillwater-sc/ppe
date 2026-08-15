@@ -40,6 +40,7 @@
 #include <ppe/harness.hpp>
 #include <ppe/platform.hpp>
 #include <ppe/provenance.hpp>
+#include <ppe/trace.hpp>
 #include <ppe/version.hpp>
 
 #include <atomic>
@@ -88,6 +89,7 @@ void print_help() {
         "      --min-kib N    smallest working set, in KiB (default 4)\n"
         "      --threads N    max threads for the scaling sweep (default: hardware)\n"
         "      --line-bytes N override the cache line size (default: detected)\n"
+        "      --trace PATH   write a Chrome Trace Event JSON of the sweep\n"
         "      --csv PATH     write results as CSV, with provenance comments\n"
         "      --json         emit the provenance record as JSON and exit\n"
         "      --no-threads   skip the thread scaling sweep\n"
@@ -129,6 +131,7 @@ std::vector<std::size_t> build_cycle(std::size_t slots, std::uint64_t seed) {
 /// fetch.
 double measure_latency_ns(std::size_t bytes, std::size_t line_bytes,
                           std::uint64_t seed) {
+    ppe::trace::scope span("latency_probe", "memory");
     const std::size_t stride = line_bytes / sizeof(std::size_t);
     const std::size_t slots = bytes / line_bytes;
     if (slots < 2 || stride == 0) return 0.0;
@@ -166,6 +169,7 @@ double measure_latency_ns(std::size_t bytes, std::size_t line_bytes,
 
 /// GB/s for a streaming read over a working set of `bytes`, on one thread.
 double measure_bandwidth_gbs(std::size_t bytes) {
+    ppe::trace::scope span("bandwidth_probe", "memory");
     const std::size_t n = bytes / sizeof(double);
     if (n < 64) return 0.0;
 
@@ -198,6 +202,7 @@ double measure_bandwidth_gbs(std::size_t bytes) {
 /// replicates a read-only line, which is a different and much flatter curve
 /// than the per-core bandwidth this sweep is after.
 double measure_bandwidth_threaded_gbs(std::size_t bytes_per_thread, unsigned threads) {
+    ppe::trace::scope span("threaded_bandwidth", "memory");
     const std::size_t n = bytes_per_thread / sizeof(double);
     if (n < 64 || threads == 0) return 0.0;
 
@@ -220,6 +225,7 @@ double measure_bandwidth_threaded_gbs(std::size_t bytes_per_thread, unsigned thr
 
     for (unsigned t = 0; t < threads; ++t) {
         pool.emplace_back([&, t] {
+            ppe::trace::global().name_thread("bandwidth worker");
             std::vector<double>& a = buffers[t];
 
             // Warm up before the barrier: first touch faults pages in, and a
@@ -499,6 +505,14 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+    // Enabled before any probe runs. Tracing is off by default precisely so a
+    // measurement is not perturbed by capture nobody asked for.
+    const char* trace_path = parse_str(argc, argv, "--trace");
+    if (trace_path != nullptr) {
+        ppe::trace::global().enable();
+        ppe::trace::global().name_thread("main");
+    }
+
     std::fputs(ppe::to_text(prov).c_str(), stdout);
     std::printf("sweep   : %s to %s, %zu-byte lines (%s)\n",
                 human_size(min_bytes).c_str(), human_size(max_bytes).c_str(),
@@ -558,6 +572,23 @@ int main(int argc, char** argv) {
             std::printf("%-10u %16.2f %11.2fx\n", t, gbs,
                         single > 0.0 ? gbs / single : 0.0);
             std::fflush(stdout);
+        }
+    }
+
+    if (trace_path != nullptr) {
+        ppe::trace::recorder::stats st;
+        if (!ppe::trace::global().write_chrome_json(trace_path, prov, &st)) {
+            std::fprintf(stderr, "error: cannot write trace to %s\n", trace_path);
+            return 1;
+        }
+        std::printf("\ntrace   : %zu events from %zu threads -> %s\n", st.recorded,
+                    st.threads, trace_path);
+        // Never silent: a truncated trace shown as complete is a picture that
+        // lies, and the viewer cannot tell.
+        if (st.dropped > 0) {
+            std::printf("          WARNING: %zu events dropped (buffer full). The\n"
+                        "          trace has invisible gaps; raise the capacity.\n",
+                        st.dropped);
         }
     }
 

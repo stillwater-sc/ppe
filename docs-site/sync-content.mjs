@@ -51,6 +51,9 @@ const FILE_MAP = {
   // -- Visualization -----------------------------------------------
   'visualization/index.md':           'visualization/index.md',
 
+  // -- Tracing -----------------------------------------------------
+  'tracing/index.md':                 'tracing/index.md',
+
   // -- Plans -------------------------------------------------------
   'plans/first-application.md':       'plans/first-application.md',
 };

@@ -22,6 +22,14 @@ one occupancy pattern differ from another.
 
 ## Traces feed it
 
+The trace layer now exists: see [Tracing](../tracing/index.md). Spans are
+captured with provenance attached and exported as Chrome Trace Event JSON, which
+Perfetto already renders as a per-thread timeline. That is not yet a schedule or
+occupancy view -- it is a flat span timeline -- but it is the event stream those
+views will be drawn from, and it means the visualization work starts from real
+recorded data rather than a synthetic example.
+
+
 Visualization consumes trace event streams; it does not instrument anything
 itself. The sibling `kpu` repository already describes an architecture for this
 — simulators emit events to a separate collection and interpretation facility,

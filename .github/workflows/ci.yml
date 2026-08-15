@@ -261,6 +261,13 @@ jobs:
           # Loopback only: binds an ephemeral 127.0.0.1 port, so nothing is
           # reachable from outside the runner and no fixed port can collide.
           ./build-ci/applications/app_network_hierarchy --mib 4 --iters 50 --conns 4
+          # Exercise the tracer end to end and confirm the export parses as JSON.
+          ./build-ci/applications/app_memory_hierarchy --min-kib 4 --max-mib 1 \
+              --threads 2 --trace "$RUNNER_TEMP/sweep.json"
+          python3 -c "import json,os,sys; d=json.load(open(os.environ['RUNNER_TEMP']+'/sweep.json')); \
+              assert d['traceEvents'], 'no events'; \
+              assert d['otherData']['events_dropped'] == 0, 'events dropped'; \
+              print('trace ok:', len(d['traceEvents']), 'events')"
 
   # -- Sanitizer lane --------------------------------------------------
   # PPE is low-level systems code: the detection backends will read raw
@@ -305,5 +312,7 @@ jobs:
           ./build-asan/applications/app_roofline --mib 8 --ghz 3.0
           ./build-asan/applications/app_storage_hierarchy --mib 8 --queue 4 --reads 16
           ./build-asan/applications/app_network_hierarchy --mib 4 --iters 50 --conns 4
+          ./build-asan/applications/app_memory_hierarchy --min-kib 4 --max-mib 1 \
+              --threads 2 --trace "$RUNNER_TEMP/sweep-asan.json"
         env:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
