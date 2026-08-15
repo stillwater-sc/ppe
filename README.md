@@ -5,10 +5,9 @@ Platform Performance Engineering tools and studies.
 Detect what a machine is, model it, measure against the model, trace what ran,
 and show the result — across CPU, KPU, and GPU platforms.
 
-> **Status: scaffolding.** The build, CI, and documentation pipeline are
-> working. The executables in the tree are placeholders that exercise the
-> toolchain end to end; they do not yet measure anything you should act on, and
-> each says so in its own output.
+> **Status: early.** `memory_hierarchy` is a real measurement — it resolves the
+> cache hierarchy on the machine it runs on. The remaining executables are
+> placeholders and say so in their own output.
 
 ## Quick start
 
@@ -17,9 +16,9 @@ cmake --preset ci
 cmake --build --preset ci
 ctest --preset ci
 
-./build-ci/tools/tool_topology              # what is this machine?
-./build-ci/benchmarks/bench_triad           # memory bandwidth
-./build-ci/applications/app_blocking_study  # GEMM blocking sweep
+./build-ci/tools/tool_topology                 # what does the OS claim?
+./build-ci/applications/app_memory_hierarchy   # what does it actually do?
+./build-ci/applications/app_blocking_study     # GEMM blocking sweep
 ```
 
 For measurements you intend to keep, use the host-tuned `release` preset and pin
@@ -27,8 +26,13 @@ the process:
 
 ```bash
 cmake --preset release && cmake --build --preset release
-taskset -c 4 ./build-release/benchmarks/bench_triad --mib 512
+taskset -c 4 ./build-release/applications/app_memory_hierarchy \
+    --max-mib 128 --csv results.csv
 ```
+
+On an i7-12700K pinned to a P-core, the latency sweep is flat at ~1.0 ns to
+48 KiB, steps 3x, is flat at ~3.06 ns to ~1 MiB, steps again, and plateaus near
+82 ns — matching `lscpu`'s 48 KiB L1d, 1.25 MiB L2, and 25 MiB L3.
 
 See [docs/getting-started/](docs/getting-started/index.md) for the full build
 options, and [docs/architecture/](docs/architecture/index.md) for how the pieces

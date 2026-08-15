@@ -3,10 +3,10 @@
 PPE is a C++20 CMake project. Everything builds with the standard preset flow —
 no dependencies beyond a compiler and CMake 3.22+.
 
-> **Status: scaffolding.** The applications, benchmarks and tools currently in
-> the tree are placeholders. They compile, run, and exercise the build and CI,
-> but they do not yet measure anything you should act on. Each one says so in
-> its own output.
+> **Status: early.** `memory_hierarchy` is a real measurement — it resolves the
+> cache hierarchy on the machine it runs on. `blocking_study` and
+> `tool_topology` are still placeholders and say so in their own output;
+> populating the latter is [phase 2](../plans/first-application.md).
 
 ## Build and run
 
@@ -19,10 +19,10 @@ ctest --preset ci          # smoke tests: every executable answers --help
 Then run any of the placeholders:
 
 ```bash
-./build-ci/tools/tool_topology              # what is this machine?
-./build-ci/tools/tool_topology --json       # ... as JSON, for other stages
-./build-ci/benchmarks/bench_triad           # memory bandwidth
-./build-ci/applications/app_blocking_study  # GEMM blocking sweep
+./build-ci/tools/tool_topology                 # what does the OS claim?
+./build-ci/tools/tool_topology --json          # ... as JSON, for other stages
+./build-ci/applications/app_memory_hierarchy   # what does it actually do?
+./build-ci/applications/app_blocking_study     # GEMM blocking sweep
 ```
 
 For measurements you intend to keep, use the `release` preset and pin the
@@ -30,8 +30,13 @@ process:
 
 ```bash
 cmake --preset release && cmake --build --preset release
-taskset -c 4 ./build-release/benchmarks/bench_triad --mib 512
+taskset -c 4 ./build-release/applications/app_memory_hierarchy \
+    --max-mib 128 --csv results.csv
 ```
+
+The CSV carries its own provenance — commit, dirty flag, compiler, flags, ISA
+baseline, device — as comment lines above the data, so a result file remains
+attributable after it is moved, mailed, or committed.
 
 `release` turns on `PPE_NATIVE_ARCH` (`-march=native`). That makes the binary
 non-portable, which is the point: you are measuring *this* machine, and a

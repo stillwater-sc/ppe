@@ -205,13 +205,17 @@ jobs:
       - name: Test (preset ci)
         run: ctest --preset ci
 
-      # Small sizes: this checks that they run and exit 0, not how fast they are.
-      - name: Run the placeholders
+      # Small sizes and --no-threads: this checks that they run and exit 0, not
+      # how fast they are. No number produced on a shared runner is recorded or
+      # compared -- memory_hierarchy in particular would report the neighbours.
+      - name: Run the executables
         run: |
           ./build-ci/tools/tool_topology
           ./build-ci/tools/tool_topology --json
-          ./build-ci/benchmarks/bench_triad --mib 8 --iters 2
+          ./build-ci/tools/tool_topology --csv-header
           ./build-ci/applications/app_blocking_study --size 128
+          ./build-ci/applications/app_memory_hierarchy --min-kib 4 --max-mib 2 --no-threads
+          ./build-ci/applications/app_memory_hierarchy --min-kib 64 --max-mib 1 --threads 2
 
   # -- Sanitizer lane --------------------------------------------------
   # PPE is low-level systems code: the detection backends will read raw
@@ -243,10 +247,15 @@ jobs:
         env:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
 
-      - name: Run the placeholders under sanitizers
+      # memory_hierarchy is the one worth sanitizing: it builds a pointer cycle
+      # by index arithmetic over a strided buffer and hands raw buffers to a
+      # thread pool. An off-by-one in the cycle construction would otherwise
+      # surface as a plausible-looking latency rather than as a crash.
+      - name: Run the executables under sanitizers
         run: |
           ./build-asan/tools/tool_topology --json
-          ./build-asan/benchmarks/bench_triad --mib 8 --iters 2
           ./build-asan/applications/app_blocking_study --size 128
+          ./build-asan/applications/app_memory_hierarchy --min-kib 4 --max-mib 2 --no-threads
+          ./build-asan/applications/app_memory_hierarchy --min-kib 64 --max-mib 1 --threads 2
         env:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
