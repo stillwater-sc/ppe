@@ -241,6 +241,11 @@ jobs:
           ./build-ci/applications/app_blocking_study --size 128
           ./build-ci/applications/app_memory_hierarchy --min-kib 4 --max-mib 2 --no-threads
           ./build-ci/applications/app_memory_hierarchy --min-kib 64 --max-mib 1 --threads 2
+          # --ghz is supplied because a runner may expose no clock at all (Apple
+          # silicon never does); without it roofline correctly refuses to invent
+          # a peak, which would fail this step for the right reason but tell us
+          # nothing about the code under test.
+          ./build-ci/applications/app_roofline --mib 8 --ghz 3.0
 
   # -- Sanitizer lane --------------------------------------------------
   # PPE is low-level systems code: the detection backends will read raw
@@ -282,5 +287,6 @@ jobs:
           ./build-asan/applications/app_blocking_study --size 128
           ./build-asan/applications/app_memory_hierarchy --min-kib 4 --max-mib 2 --no-threads
           ./build-asan/applications/app_memory_hierarchy --min-kib 64 --max-mib 1 --threads 2
+          ./build-asan/applications/app_roofline --mib 8 --ghz 3.0
         env:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1

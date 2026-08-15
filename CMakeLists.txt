@@ -154,6 +154,10 @@ if(PPE_BUILD_TESTS)
     enable_testing()
 endif()
 
+if(PPE_BUILD_TESTS)
+    add_subdirectory(tests)
+endif()
+
 if(PPE_BUILD_APPLICATIONS)
     add_subdirectory(applications)
 endif()

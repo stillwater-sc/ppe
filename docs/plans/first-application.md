@@ -148,9 +148,33 @@ starting over.
 ### Phase 3 — peak model and roofline
 
 Port `peak.hpp`'s *role*, not its constants: ops/cycle derived from the detected
-ISA, clock from a sustained-clock measurement rather than a command-line flag.
-The roofline falls out of phases 1 and 3 — modelled compute peak against
+ISA. The roofline falls out of phases 1 and 3 — modelled compute peak against
 measured bandwidth gives the ridge point.
+
+**Amendment: the clock is a claim, not a measurement.** This phase originally
+called for "a sustained-clock measurement rather than a command-line flag".
+Reaching that honestly needs a performance counter (privileged, and with no
+portable equivalent), or the timestamp counter (invariant since Nehalem — it
+ticks at a fixed reference rate regardless of the core clock, which is exactly
+what makes it useless here), or a dependent instruction chain of assumed
+latency, which merely relocates the guess. `ppe/detect/clock.hpp` therefore
+reports what the OS claims, labelled as a claim, with `--ghz` to override. A
+`perf_event` backend on Linux, degrading to the claim where permissions do not
+allow it, would close this properly and is worth doing.
+
+**What is derivable, and what is not.** The model's three factors have different
+status, and conflating them is how a peak model starts lying:
+
+| Factor | Status |
+|---|---|
+| lanes | derived from detected vector width |
+| ops per FMA | derived: 2 with FMA, 1 without |
+| FMA units per core | **not derivable** — no instruction reports it; an input, default 2 |
+| clock | claimed by the OS, or supplied |
+
+`tests/peak_model.cpp` asserts the derived model reproduces the hand-written
+constants on the target they were written for. It exists because the first
+version failed it.
 
 At this point `mtl5/ppe` can consume a PPE machine profile, and the GEMM
 blocking study returns here as a *consumer* of the detected hierarchy — which is

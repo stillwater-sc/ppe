@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Phase 3** (#4): peak model and roofline. `include/ppe/peak.hpp` derives
+  ops/cycle from runtime-detected vector width instead of hardcoding one
+  microarchitecture, `include/ppe/detect/isa.hpp` detects SIMD capability
+  (including the XGETBV check for OS register-state enablement), and
+  `applications/roofline` reports modelled compute peak against measured
+  bandwidth to give the ridge point. The FMA-unit count is an input, not a
+  detection: no instruction reports it.
+- `tests/` — assertions about the model layer, with `test_peak_model`
+  verifying the derived model reproduces the hand-written constants it
+  generalizes.
 - **Phase 2** (#4): real CPU detection backends (`include/ppe/detect/`). Linux
   sysfs scanned over the affinity mask, macOS `sysctl`, and a Windows
   `GetLogicalProcessorInformationEx` backend — the last covering a
