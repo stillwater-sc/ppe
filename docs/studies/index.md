@@ -71,6 +71,45 @@ produced a smooth, plausible, monotonically improving scaling curve. It was
 caught by pinning the process to one core and asking whether the answer was
 physically possible.
 
+## `storage_hierarchy` — the same curve, one level down
+
+Block size and queue depth against bandwidth and latency, on a file. The knees
+mark the device's minimum useful transfer and its internal parallelism rather
+than cache capacity, but the shape of the investigation is identical.
+
+On the development machine's rotating volume, 256 MiB file, `O_DIRECT`:
+
+```
+block              seq GB/s  rand latency us
+4 KiB                 0.053          6273.16
+16 KiB                0.170          6205.05
+64 KiB                0.205          6392.82
+1 MiB                 0.205         11002.68
+```
+
+Sequential bandwidth climbs to a 205 MB/s plateau from 64 KiB — below that,
+per-request overhead dominates, which is the storage analogue of a cache-line
+effect. Random latency sits near 6.2 ms and queue depth scales only 2.4x to
+depth 16. Rotating storage, correctly characterized: an NVMe device would show
+sub-100 us latency and keep scaling into the tens.
+
+### Two ways this probe can lie
+
+**The page cache.** Reading a just-written file through the buffered path
+measures memcpy from DRAM and reports it as device bandwidth. The probe requests
+a cache bypass, reports which mode it got, and refuses to present a buffered
+result as a device characterization. `--no-direct` measures the buffered path
+deliberately — a valid thing to measure, and labelled as such.
+
+**Its own writeback.** `flush()` on a stream pushes userspace buffers into the
+kernel and returns; the pages are still dirty and the writeback still queued. A
+read sweep started at that moment competes with the writeback of its own test
+file for the same device. The first version did exactly this and reported
+**40 MB/s where `dd` reported 213** — a 5x error that looked like a slow disk
+rather than a bug. It was caught by checking the probe against an independent
+tool instead of trusting a plausible number, and the fix is an `fsync` before
+measuring.
+
 ## Blocking studies
 
 > **Status: scaffolding.** `app_blocking_study` is a placeholder — a hardcoded

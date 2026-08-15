@@ -246,6 +246,11 @@ jobs:
           # a peak, which would fail this step for the right reason but tell us
           # nothing about the code under test.
           ./build-ci/applications/app_roofline --mib 8 --ghz 3.0
+          # Writes an 8 MiB file to the temp dir and removes it. O_DIRECT is
+          # rejected on some runner filesystems (tmpfs among them); the probe
+          # falls back to buffered and says so, which is a path worth exercising
+          # here since it is the one a container is most likely to take.
+          ./build-ci/applications/app_storage_hierarchy --mib 8 --queue 4 --reads 16
 
   # -- Sanitizer lane --------------------------------------------------
   # PPE is low-level systems code: the detection backends will read raw
@@ -288,5 +293,6 @@ jobs:
           ./build-asan/applications/app_memory_hierarchy --min-kib 4 --max-mib 2 --no-threads
           ./build-asan/applications/app_memory_hierarchy --min-kib 64 --max-mib 1 --threads 2
           ./build-asan/applications/app_roofline --mib 8 --ghz 3.0
+          ./build-asan/applications/app_storage_hierarchy --mib 8 --queue 4 --reads 16
         env:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1

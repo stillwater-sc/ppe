@@ -183,9 +183,30 @@ material.
 
 ### Phase 4 — storage and network levels
 
-The same curve at new levels: storage (queue depth, block size, read/write mix)
-and network (message size, in-flight requests). Same schema, same provenance,
-same output format.
+The same curve at new levels. Same schema, same provenance, same output format.
+
+**Storage: done.** `applications/storage_hierarchy` sweeps block size and queue
+depth against bandwidth and latency. The knees mean something different from the
+DRAM ones — the device's minimum useful transfer, below which per-request
+overhead dominates, and its internal parallelism, above which more in-flight
+requests stop helping — but they are the same kind of finding.
+
+Two hazards it has to defeat, both of which produce large, smooth, plausible
+numbers describing nothing:
+
+- **The page cache.** Reading a just-written file through the buffered path
+  measures memcpy from DRAM. The probe requests `O_DIRECT` / `F_NOCACHE` /
+  `FILE_FLAG_NO_BUFFERING`, reports which mode it actually got, and refuses to
+  present a buffered result as a device characterization.
+- **Its own writeback.** A stream's `flush()` pushes userspace buffers into the
+  kernel and returns; the pages are still dirty and the writeback still queued.
+  A read sweep started then competes with the writeback of its own test file.
+  Measured on the development machine: **40 MB/s without `fsync` against
+  205 MB/s with it** — a 5x error, in the direction that makes a device look bad.
+
+**Network: not started.** Message size and in-flight requests, over loopback and
+between hosts. Loopback measures the kernel stack rather than a NIC, which is a
+legitimate level to characterize provided the report says which one it is.
 
 ## What this plan deliberately does not do
 

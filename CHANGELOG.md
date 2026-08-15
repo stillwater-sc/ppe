@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Phase 4, storage half** (#4): `applications/storage_hierarchy` sweeps block
+  size and queue depth against bandwidth and latency, with cache bypass
+  (`O_DIRECT` / `F_NOCACHE` / `FILE_FLAG_NO_BUFFERING`) via
+  `include/ppe/detect/fileio.hpp`. Reports which IO mode it actually got and
+  refuses to present a buffered result as a device characterization. The
+  network half is not started.
 - **Phase 3** (#4): peak model and roofline. `include/ppe/peak.hpp` derives
   ops/cycle from runtime-detected vector width instead of hardcoding one
   microarchitecture, `include/ppe/detect/isa.hpp` detects SIMD capability
