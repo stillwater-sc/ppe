@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Phase 4, network half** (#4): `applications/network_hierarchy` sweeps
+  message size and concurrent connections against round-trip latency and
+  streaming bandwidth, via `include/ppe/detect/net.hpp`. Loopback by default;
+  `--server` / `--connect` for cross-host. Sets `TCP_NODELAY` on every socket
+  and reports which level it measured.
 - **Phase 4, storage half** (#4): `applications/storage_hierarchy` sweeps block
   size and queue depth against bandwidth and latency, with cache bypass
   (`O_DIRECT` / `F_NOCACHE` / `FILE_FLAG_NO_BUFFERING`) via

@@ -204,9 +204,23 @@ numbers describing nothing:
   Measured on the development machine: **40 MB/s without `fsync` against
   205 MB/s with it** — a 5x error, in the direction that makes a device look bad.
 
-**Network: not started.** Message size and in-flight requests, over loopback and
-between hosts. Loopback measures the kernel stack rather than a NIC, which is a
-legitimate level to characterize provided the report says which one it is.
+**Network: done.** `applications/network_hierarchy` sweeps message size and
+concurrent connections against round-trip latency and streaming bandwidth,
+against an in-process loopback server by default or `--server` / `--connect`
+across two hosts.
+
+Three hazards, all producing plausible numbers about the wrong thing:
+
+- **Nagle.** Combined with the receiver's delayed ACK, a small-message ping-pong
+  deadlocks into a 40 ms timer and reports it as network latency. `TCP_NODELAY`
+  is set everywhere and the report says so.
+- **Loopback is not a NIC.** It is protocol processing plus a memcpy, never a
+  wire. A useful bound on local IPC, not a hardware measurement; the target is
+  printed and recorded in the CSV.
+- **A serialized server.** The first version served connections one at a time,
+  so the concurrency sweep measured the server rather than the link: 8
+  connections at 0.67x of one. Thread-per-connection is a measurement
+  requirement, not a scalability preference.
 
 ## What this plan deliberately does not do
 

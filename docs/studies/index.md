@@ -135,6 +135,55 @@ rather than a bug. It was caught by checking the probe against an independent
 tool instead of trusting a plausible number, and the fix is an `fsync` before
 measuring.
 
+## `network_hierarchy` — the same curve, one level further out
+
+Message size and concurrent connections against round-trip latency and
+streaming bandwidth. Runs against an in-process loopback server by default, or
+`--server` / `--connect HOST` across two machines.
+
+Loopback on the development machine:
+
+```
+message            RTT (us)      stream GB/s
+64 B                  14.37            0.023
+4 KiB                  8.42            1.258
+32 KiB                14.50            5.763
+256 KiB               54.91            9.424
+
+conns        aggregate GB/s      vs 1 conn
+1                     6.240          1.00x
+8                    15.608          2.50x
+16                   10.774          1.73x
+```
+
+Bandwidth climbs steeply with message size because small messages are dominated
+by per-message cost — syscall, headers, wakeup — exactly as small blocks are on
+storage. Concurrency scales to 8 and then falls back at 16, which is right:
+loopback is CPU-bound, and 16 client threads plus 16 server threads oversubscribe
+20 logical processors.
+
+### Three ways this probe can lie
+
+**Nagle.** Nagle's algorithm holds a small write until the previous one is
+acknowledged; the receiver's delayed ACK waits up to 40 ms hoping to piggyback
+its acknowledgement. A small-message ping-pong deadlocks into that timer and
+reports tens of milliseconds of "network latency" on an interface capable of
+single-digit microseconds — stable, reproducible, wrong. Every socket sets
+`TCP_NODELAY` and the report says so.
+
+**Loopback is not a NIC.** Traffic over 127.0.0.1 never reaches a wire: it is
+protocol processing plus a memcpy. That bounds what local IPC over TCP can
+achieve, which is worth knowing, but it is not a measurement of network
+hardware. The target is printed and recorded in the CSV, because a loopback
+figure and a cross-host figure are different levels.
+
+**A serialized server.** The first version served connections one at a time from
+the accept loop, so the concurrency sweep measured the server's serialization
+rather than the link — 8 connections came out at **0.67x** of one. A sweep whose
+independent variable the program itself has pinned to 1 produces a smooth,
+plausible curve about nothing. Thread-per-connection is a measurement
+requirement here, not a scalability preference.
+
 ## Blocking studies
 
 > **Status: scaffolding.** `app_blocking_study` is a placeholder — a hardcoded

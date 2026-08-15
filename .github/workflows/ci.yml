@@ -258,6 +258,9 @@ jobs:
           # falls back to buffered and says so, which is a path worth exercising
           # here since it is the one a container is most likely to take.
           ./build-ci/applications/app_storage_hierarchy --mib 8 --queue 4 --reads 16
+          # Loopback only: binds an ephemeral 127.0.0.1 port, so nothing is
+          # reachable from outside the runner and no fixed port can collide.
+          ./build-ci/applications/app_network_hierarchy --mib 4 --iters 50 --conns 4
 
   # -- Sanitizer lane --------------------------------------------------
   # PPE is low-level systems code: the detection backends will read raw
@@ -301,5 +304,6 @@ jobs:
           ./build-asan/applications/app_memory_hierarchy --min-kib 64 --max-mib 1 --threads 2
           ./build-asan/applications/app_roofline --mib 8 --ghz 3.0
           ./build-asan/applications/app_storage_hierarchy --mib 8 --queue 4 --reads 16
+          ./build-asan/applications/app_network_hierarchy --mib 4 --iters 50 --conns 4
         env:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
