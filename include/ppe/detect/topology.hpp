@@ -330,6 +330,13 @@ inline platform_topology topology_sysctl() {
         c.l1d_bytes = sysctl_size((p + "l1dcachesize").c_str());
         c.l1i_bytes = sysctl_size((p + "l1icachesize").c_str());
         c.l2_bytes = sysctl_size((p + "l2cachesize").c_str());
+        // hw.perflevelN.l1dcachesize is documented as the L1 data cache size
+        // *for a CPU in this performance level* -- a per-CPU quantity, unlike
+        // l2cachesize which describes the shared instance. So the sharing count
+        // is 1 by the sysctl's own semantics, not by an assumption about the
+        // hardware. Recorded explicitly rather than left at 0, which would
+        // render as "sharing unknown" and imply a detection failure.
+        if (c.l1d_bytes != 0) c.l1d_sharing_cores = 1;
         // Cores sharing an L2 within a perflevel: macOS reports
         // cpusperl2 on some versions; when absent, leave unknown rather than
         // assume private.
@@ -361,7 +368,10 @@ inline platform_topology topology_win32() {
 
     t.capacity_source = "efficiency_class";
     std::vector<std::pair<KAFFINITY, BYTE>> cores;  // mask, efficiency class
+    std::vector<std::pair<KAFFINITY, std::size_t>> l1ds;
+    std::vector<std::pair<KAFFINITY, std::size_t>> l1is;
     std::vector<std::pair<KAFFINITY, std::size_t>> l2s;
+    KAFFINITY l3_mask = 0;
     std::set<int> nodes;
 
     for (const LOGICAL_PROCESSOR_RELATIONSHIP rel :
@@ -387,11 +397,22 @@ inline platform_topology topology_win32() {
                 t.logical_processors += popcount_affinity(info->Processor.GroupMask[0].Mask);
             } else if (info->Relationship == RelationCache) {
                 const CACHE_RELATIONSHIP& c = info->Cache;
-                if (c.Type == CacheInstruction) { /* skip */ }
+                // Level 1 was previously skipped entirely, so every Windows
+                // cluster reported "L1d n/a". The instruction cache is kept
+                // separately and must never be mistaken for L1d: they are the
+                // same size on many parts, so the error would be invisible.
+                if (c.Level == 1 && c.Type == CacheData) {
+                    l1ds.emplace_back(c.GroupMask.Mask,
+                                      static_cast<std::size_t>(c.CacheSize));
+                } else if (c.Level == 1 && c.Type == CacheInstruction) {
+                    l1is.emplace_back(c.GroupMask.Mask,
+                                      static_cast<std::size_t>(c.CacheSize));
+                } else if (c.Type == CacheInstruction) { /* higher-level I-cache */ }
                 else if (c.Level == 2) {
                     l2s.emplace_back(c.GroupMask.Mask, static_cast<std::size_t>(c.CacheSize));
                 } else if (c.Level == 3 && t.l3_bytes == 0) {
                     t.l3_bytes = c.CacheSize;
+                    l3_mask = c.GroupMask.Mask;
                 }
                 if (t.cache_line_bytes == 0 && c.LineSize != 0) t.cache_line_bytes = c.LineSize;
             } else if (info->Relationship == RelationNumaNode) {
@@ -404,6 +425,17 @@ inline platform_topology topology_win32() {
     }
     t.numa_domains = static_cast<unsigned>(nodes.size());
     if (t.packages == 0) t.packages = 1;
+
+    // Physical cores covered by a group mask. Cores, not logical processors:
+    // an SMT pair shares its L1d, so counting processors would halve every
+    // private cache on a hyperthreaded machine.
+    auto cores_under = [&cores](KAFFINITY mask) {
+        std::size_t n = 0;
+        for (const auto& core : cores) {
+            if ((core.first & mask) != 0) ++n;
+        }
+        return n;
+    };
 
     // One cluster per L2 instance; cores are attached to the L2 whose mask
     // covers them.
@@ -418,9 +450,32 @@ inline platform_topology topology_win32() {
                 c.capacity = std::max<std::size_t>(c.capacity, core.second + 1);
             }
         }
-        c.l2_sharing_cores = c.physical_cores;
+        c.l2_sharing_cores = cores_under(l2.first);
+
+        // Attach the L1 instances belonging to this cluster. Any L1d whose mask
+        // overlaps the L2's belongs to a core in this cluster; its own mask
+        // gives the real sharing count, which is 1 for a private L1d and more
+        // on the rare part that shares one.
+        for (const auto& l1 : l1ds) {
+            if ((l1.first & l2.first) != 0) {
+                c.l1d_bytes = l1.second;
+                c.l1d_sharing_cores = cores_under(l1.first);
+                break;
+            }
+        }
+        for (const auto& l1 : l1is) {
+            if ((l1.first & l2.first) != 0) {
+                c.l1i_bytes = l1.second;
+                break;
+            }
+        }
+
         if (c.physical_cores > 0) t.clusters.push_back(c);
     }
+
+    // L3 sharing, from the same mask arithmetic. Previously left at 0, which
+    // renders as "sharing unknown" on a machine where it is perfectly knowable.
+    if (l3_mask != 0) t.l3_sharing_cores = cores_under(l3_mask);
     return t;
 }
 
