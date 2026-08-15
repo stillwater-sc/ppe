@@ -31,12 +31,18 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
+// <set> and <utility> are needed by the Linux AND Windows backends, so they are
+// unconditional. They were once inside the __linux__ branch, which built fine on
+// the machine this was written on and broke both Windows jobs: a
+// platform-conditional include has to cover every platform that uses the symbol,
+// and "it compiles here" does not check that.
 #if defined(__linux__)
 #  include <fstream>
-#  include <set>
 #elif defined(__APPLE__)
 #  include <sys/sysctl.h>
 #elif defined(_WIN32)
