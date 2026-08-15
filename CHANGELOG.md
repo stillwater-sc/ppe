@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `include/ppe/detect/topology.hpp` and `include/ppe/report/topology_report.hpp`
+  (#6): cluster topology as a first-class structure -- a cluster being the cores
+  sharing one L2 instance -- with Linux/macOS/Windows backends, core-capability
+  ranking through cpu_capacity / ACPI CPPC / cpufreq, and ASCII, self-contained
+  HTML and JSON renderers. `tool_topology` gains `--ascii`, `--html PATH` and
+  `--topo-json`.
+
 - `applications/layer_bandwidth` (#5): achieved read/write/copy bandwidth per
   hierarchy layer -- L1d, L2, L3, DRAM, storage -- as named numbers rather than
   a curve, in GB/s and bytes/cycle, single-thread and aggregate, with shared

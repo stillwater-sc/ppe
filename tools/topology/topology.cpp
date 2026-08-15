@@ -11,6 +11,8 @@
 #include <ppe/cli.hpp>
 #include <ppe/detect/clock.hpp>
 #include <ppe/detect/isa.hpp>
+#include <ppe/detect/topology.hpp>
+#include <ppe/report/topology_report.hpp>
 #include <ppe/platform.hpp>
 #include <ppe/provenance.hpp>
 #include <ppe/version.hpp>
@@ -29,6 +31,9 @@ void print_help() {
         "  -h, --help       show this help and exit\n"
         "      --json       emit the attribute set as JSON\n"
         "      --csv-header emit the provenance as CSV comment lines\n"
+        "      --ascii      draw the cluster topology as an ASCII tree\n"
+        "      --html PATH  write a self-contained HTML topology report\n"
+        "      --topo-json  emit the full cluster topology as JSON\n"
         "\n"
         "PLACEHOLDER: only portable attributes are reported. Cache sizes, NUMA\n"
         "topology, and GPU/KPU devices need the per-platform backends described\n"
@@ -142,6 +147,30 @@ int main(int argc, char** argv) {
     // hand-rolled here: they need consistent escaping (build flags arrive with
     // quotes and backslashes on Windows) and every PPE executable must emit the
     // same schema, or a result file cannot be joined to any other.
+    if (ppe::has_flag(argc, argv, "--topo-json")) {
+        std::fputs(ppe::report::to_json(ppe::detect_topology()).c_str(), stdout);
+        return 0;
+    }
+
+    if (const char* html = ppe::flag_value(argc, argv, "--html"); html != nullptr) {
+        const ppe::platform_topology topo = ppe::detect_topology();
+        std::FILE* f = std::fopen(html, "w");
+        if (f == nullptr) {
+            std::fprintf(stderr, "error: cannot write %s\n", html);
+            return 1;
+        }
+        const std::string page = ppe::report::to_html(topo, prov);
+        std::fwrite(page.data(), 1, page.size(), f);
+        std::fclose(f);
+        std::printf("wrote %zu bytes of HTML to %s\n", page.size(), html);
+        return 0;
+    }
+
+    if (ppe::has_flag(argc, argv, "--ascii")) {
+        std::fputs(ppe::report::to_ascii(ppe::detect_topology()).c_str(), stdout);
+        return 0;
+    }
+
     if (ppe::has_flag(argc, argv, "--json")) {
         std::fputs(ppe::to_json(prov).c_str(), stdout);
     } else if (ppe::has_flag(argc, argv, "--csv-header")) {

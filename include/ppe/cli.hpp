@@ -20,6 +20,15 @@ inline bool has_flag(int argc, char** argv, std::string_view flag) {
     return false;
 }
 
+/// Value following `flag`, or nullptr when absent. Deliberately not a parser:
+/// see the note above.
+inline const char* flag_value(int argc, char** argv, std::string_view flag) {
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (flag == argv[i]) return argv[i + 1];
+    }
+    return nullptr;
+}
+
 inline bool wants_help(int argc, char** argv) {
     return has_flag(argc, argv, "--help") || has_flag(argc, argv, "-h");
 }

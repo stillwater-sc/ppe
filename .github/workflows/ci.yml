@@ -197,6 +197,10 @@ jobs:
         run: |
           ./build/tools/tool_topology
           ./build/tools/tool_topology --json
+          # Cluster topology: the backends differ per platform and the only
+          # runners with more than one cluster shape are the macOS ones.
+          ./build/tools/tool_topology --ascii
+          ./build/tools/tool_topology --topo-json
           ./build/applications/app_memory_hierarchy --min-kib 4 --max-mib 2 --no-threads
 
       - name: Run detection and sweep (Windows)
@@ -204,6 +208,8 @@ jobs:
         run: |
           .\build\tools\Release\tool_topology.exe
           .\build\tools\Release\tool_topology.exe --json
+          .\build\tools\Release\tool_topology.exe --ascii
+          .\build\tools\Release\tool_topology.exe --topo-json
           .\build\applications\Release\app_memory_hierarchy.exe --min-kib 4 --max-mib 2 --no-threads
 
   # -- CMakePresets.json validation ------------------------------------
@@ -262,6 +268,17 @@ jobs:
           # reachable from outside the runner and no fixed port can collide.
           ./build-ci/applications/app_network_hierarchy --mib 4 --iters 50 --conns 4
           ./build-ci/applications/app_layer_bandwidth --threads 2 --dram-mib 8 --no-storage
+          # HTML report must be self-contained: a report needing a network to
+          # render is not a report you can keep.
+          ./build-ci/tools/tool_topology --html "$RUNNER_TEMP/topo.html"
+          python3 -c "import os,re,sys; d=open(os.environ['RUNNER_TEMP']+'/topo.html').read(); \
+              ext=re.findall(r'src=|href=\"http|@import|url\\(', d); \
+              assert not ext, 'external refs: %r' % ext; \
+              assert d.startswith('<!doctype html>'), 'no doctype'; \
+              print('html ok:', len(d), 'bytes, self-contained')"
+          ./build-ci/tools/tool_topology --topo-json | python3 -c "import json,sys; \
+              d=json.load(sys.stdin); assert d['clusters'], 'no clusters'; \
+              print('topology ok:', len(d['clusters']), 'clusters')"
           # Exercise the tracer end to end and confirm the export parses as JSON.
           ./build-ci/applications/app_memory_hierarchy --min-kib 4 --max-mib 1 \
               --threads 2 --trace "$RUNNER_TEMP/sweep.json"

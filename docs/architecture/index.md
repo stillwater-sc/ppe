@@ -56,6 +56,35 @@ Where several caches are candidates, the one with the **smallest per-core
 budget** wins, so a model's blocks fit whichever core the work lands on rather
 than overflowing the smaller kind.
 
+### Cluster topology (#6)
+
+`ppe::device_attributes` is single-valued by design: `detect/cpu.hpp` keeps, per
+level, the entry with the *smallest per-core budget* across the CPUs the process
+may run on. That is right for a model that must not overflow whichever core the
+work lands on, and wrong for describing a machine. On an i7-12700K it reports
+32 KiB L1d / 2 MiB L2 (the E-cluster) unpinned, and 48 KiB / 1.25 MiB pinned to a
+P-core. Both correct; neither is the machine.
+
+`include/ppe/detect/topology.hpp` adds the structural view alongside it.
+**A cluster is the set of cores sharing one L2 instance** — the definition that
+keeps a 4+2 machine from collapsing into "6 cores", and that renders an Alder
+Lake as 8 single-core P-clusters plus one 4-core E-cluster. Identical clusters
+are collapsed at *render* time with a multiplier, never in the data.
+
+Unlike `detect_cpu()`, topology describes the **whole machine** rather than the
+affinity mask: a report that changed under `taskset` would be describing the
+scheduler's permissions, not the hardware.
+
+Core capability comes from the best available source, recorded so the role
+labels can be traced: `cpu_capacity` (ARM/EAS), then ACPI CPPC `nominal_perf`,
+then `cpufreq`. The canonical file is absent on x86 — including the hybrid parts
+where the distinction matters most — where CPPC reads 45 on a P-core against 27
+on an E-core.
+
+Rendered by `include/ppe/report/topology_report.hpp` as an ASCII tree, a
+self-contained HTML page, and JSON, so the page and any future visualization
+render from one machine-readable form.
+
 ### Still to build
 
 | Target | Sources |
