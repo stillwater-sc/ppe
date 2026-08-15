@@ -1,0 +1,49 @@
+#pragma once
+// PPE -- build provenance for measurement results (configured by CMake).
+//
+// Ported from mtl5/include/mtl/build_info.hpp.in (Stillwater, MIT).
+//
+// A committed result is evidence, and evidence that cannot be traced to the
+// code and configuration that produced it is worth much less than it looks. A
+// sidecar recording the CPU, OS, compiler and caches but nothing identifying
+// the BUILD cannot answer whether a run was compiled with AVX-512 or without --
+// which is regularly the question that turns out to matter.
+//
+// git_commit is regenerated at BUILD time rather than configure time. A
+// configure-time value goes stale the moment you commit and rebuild without
+// reconfiguring, and a sidecar confidently naming the wrong commit is worse than
+// one naming none. cmake/GitInfo.cmake reruns per build and rewrites this header
+// only when the content actually changes, so it costs no spurious rebuilds.
+
+#define PPE_BUILD_GIT_COMMIT  "@PPE_BUILD_GIT_COMMIT@"
+#define PPE_BUILD_GIT_DIRTY   "@PPE_BUILD_GIT_DIRTY@"
+#define PPE_BUILD_CXX_FLAGS   "@PPE_BUILD_CXX_FLAGS@"
+#define PPE_BUILD_CMAKE_TYPE  "@PPE_BUILD_CMAKE_TYPE@"
+
+namespace ppe {
+
+/// Short git SHA the binary was built from, or "unknown" outside a git checkout.
+inline constexpr const char* build_git_commit = PPE_BUILD_GIT_COMMIT;
+
+/// "1" when the working tree had changes at build time (tracked OR untracked --
+/// applications/, benchmarks/ and tools/ glob their sources, so an untracked
+/// .cpp is compiled in), "0" when clean, and "unknown" when git is unavailable
+/// or the status query failed. A result from a dirty tree is not reproducible;
+/// record it rather than pretend otherwise -- and "unknown" is not "clean".
+inline constexpr const char* build_git_dirty = PPE_BUILD_GIT_DIRTY;
+
+/// CMAKE_CXX_FLAGS plus CMAKE_CXX_FLAGS_<CONFIG>, as configured.
+///
+/// Read this as the build's INTENT, not as the ISA. Flags reach the compiler by
+/// several routes -- PPE_NATIVE_ARCH adds -march=native through
+/// target_compile_options and never appears in any CMAKE_CXX_FLAGS variable --
+/// so this string can omit the one flag that mattered. ppe::build_isa() is the
+/// authoritative answer, because it asks the compiler which ISA macros it
+/// actually defined.
+inline constexpr const char* build_cxx_flags = PPE_BUILD_CXX_FLAGS;
+
+/// The CMake build type, or "unknown-at-configure-time" for a multi-config
+/// generator whose configuration is not known until build time.
+inline constexpr const char* build_cmake_type = PPE_BUILD_CMAKE_TYPE;
+
+}  // namespace ppe

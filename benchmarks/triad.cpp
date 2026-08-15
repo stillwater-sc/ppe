@@ -14,7 +14,9 @@
 // machine, so a bandwidth gate built on them measures the neighbours.
 
 #include <ppe/cli.hpp>
+#include <ppe/harness.hpp>
 #include <ppe/platform.hpp>
+#include <ppe/provenance.hpp>
 #include <ppe/version.hpp>
 
 #include <chrono>
@@ -35,6 +37,7 @@ void print_help() {
         "  -h, --help      show this help and exit\n"
         "      --mib N     working set per array, in MiB (default 64)\n"
         "      --iters N   timed iterations (default 5)\n"
+        "      --json      emit the provenance record as JSON and exit\n"
         "\n"
         "PLACEHOLDER: single-threaded, no NUMA placement, working-set size not\n"
         "derived from the detected cache hierarchy. Pin to a core (taskset)\n"
@@ -60,16 +63,19 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    const ppe::provenance prov = ppe::collect_provenance();
+    if (ppe::has_flag(argc, argv, "--json")) {
+        std::fputs(ppe::to_json(prov).c_str(), stdout);
+        return 0;
+    }
+
     const int mib = parse_int(argc, argv, "--mib", 64);
     const int iters = parse_int(argc, argv, "--iters", 5);
 
     const std::size_t bytes = static_cast<std::size_t>(mib) * 1024u * 1024u;
     const std::size_t n = bytes / sizeof(double);
 
-    const ppe::device_attributes cpu = ppe::detect_cpu();
-    std::printf("PPE %s -- triad bandwidth (PLACEHOLDER)\n", ppe::version_string);
-    std::printf("device  : %s\n", cpu.name.c_str());
-    std::printf("compiler: %s, ISA baseline: %s\n", ppe::build_compiler(), ppe::build_isa());
+    std::fputs(ppe::to_text(prov).c_str(), stdout);
     std::printf("arrays  : 3 x %d MiB (%zu elements each)\n\n", mib, n);
 
     std::vector<double> a(n, 0.0);
@@ -82,27 +88,25 @@ int main(int argc, char** argv) {
     // true traffic is higher, which is one reason this is a placeholder.
     const double moved_bytes = 3.0 * static_cast<double>(n) * sizeof(double);
 
-    // Warm-up: first touch faults the pages in, and timing that measures the
-    // allocator rather than the memory system.
-    for (std::size_t i = 0; i < n; ++i) a[i] = b[i] + scalar * c[i];
+    // ppe::time_median warms up once (first touch faults the pages in, and
+    // timing that measures the allocator) and reports the median rather than
+    // the mean: on any machine that is not perfectly quiet the distribution has
+    // a long right tail from scheduling, and a mean reports the interference.
+    const double seconds = ppe::time_median(
+        [&] {
+            for (std::size_t i = 0; i < n; ++i) {
+                a[i] = b[i] + scalar * c[i];
+            }
+        },
+        static_cast<std::size_t>(iters));
 
-    std::printf("%-8s %12s %12s\n", "iter", "seconds", "GB/s");
-    double best = 0.0;
-    for (int it = 0; it < iters; ++it) {
-        const auto start = std::chrono::steady_clock::now();
-        for (std::size_t i = 0; i < n; ++i) {
-            a[i] = b[i] + scalar * c[i];
-        }
-        const auto stop = std::chrono::steady_clock::now();
+    const double gbs = seconds > 0.0 ? moved_bytes / seconds / 1e9 : 0.0;
 
-        const double seconds = std::chrono::duration<double>(stop - start).count();
-        const double gbs = seconds > 0.0 ? moved_bytes / seconds / 1e9 : 0.0;
-        if (gbs > best) best = gbs;
-        std::printf("%-8d %12.6f %12.2f\n", it, seconds, gbs);
-    }
+    std::printf("%-12s %12s %12s\n", "reps", "median s", "GB/s");
+    std::printf("%-12d %12.6f %12.2f\n", iters, seconds, gbs);
 
     // Consume the result so the loop above cannot be optimized away entirely.
-    std::printf("\nbest: %.2f GB/s   (checksum %.1f)\n", best, a[n / 2]);
+    std::printf("\nchecksum %.1f\n", a[n / 2]);
     std::printf(
         "NOTE: placeholder measurement -- single-threaded, no NUMA placement,\n"
         "      working set not sized against the detected last-level cache.\n");

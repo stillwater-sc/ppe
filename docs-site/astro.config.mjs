@@ -50,6 +50,10 @@ export default defineConfig({
           items: [{ autogenerate: { directory: 'visualization' } }],
         },
         {
+          label: 'Plans',
+          items: [{ autogenerate: { directory: 'plans' } }],
+        },
+        {
           label: 'Changelog',
           link: '/changelog/',
         },

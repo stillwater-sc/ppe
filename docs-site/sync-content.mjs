@@ -50,6 +50,9 @@ const FILE_MAP = {
 
   // -- Visualization -----------------------------------------------
   'visualization/index.md':           'visualization/index.md',
+
+  // -- Plans -------------------------------------------------------
+  'plans/first-application.md':       'plans/first-application.md',
 };
 
 // -- Root files (relative to repo root) ----------------------------

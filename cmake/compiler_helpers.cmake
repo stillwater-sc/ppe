@@ -23,6 +23,13 @@ macro(compile_all testing prefix folder link_libs)
         add_executable(${test_name} ${new_source})
         target_link_libraries(${test_name} PRIVATE ${link_libs})
         set_target_properties(${test_name} PROPERTIES FOLDER ${folder})
+        # Provenance is regenerated per build, so the recorded commit follows
+        # the working tree rather than the last configure. Depended on per
+        # target rather than carried on the INTERFACE, which would invalidate
+        # every consumer's objects on each commit.
+        if(TARGET ppe_build_info)
+            add_dependencies(${test_name} ppe_build_info)
+        endif()
         if(${testing} STREQUAL "true")
             if(PPE_CMAKE_TRACE)
                 message(STATUS "testing: ${test_name}")

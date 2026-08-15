@@ -14,7 +14,9 @@
 // Not run by CI: real numbers need pinned cores and a quiet machine.
 
 #include <ppe/cli.hpp>
+#include <ppe/harness.hpp>
 #include <ppe/platform.hpp>
+#include <ppe/provenance.hpp>
 #include <ppe/version.hpp>
 
 #include <algorithm>
@@ -35,6 +37,7 @@ void print_help() {
         "Options:\n"
         "  -h, --help     show this help and exit\n"
         "      --size N   square matrix dimension (default 256)\n"
+        "      --json     emit the provenance record as JSON and exit\n"
         "\n"
         "PLACEHOLDER: hardcoded block sizes, single kernel, single trial. Pin to\n"
         "a performance core (taskset) before believing any number it prints.\n",
@@ -82,39 +85,65 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    const int n = parse_size(argc, argv, 256);
-    const ppe::device_attributes cpu = ppe::detect_cpu();
+    const ppe::provenance prov = ppe::collect_provenance();
+    if (ppe::has_flag(argc, argv, "--json")) {
+        std::fputs(ppe::to_json(prov).c_str(), stdout);
+        return 0;
+    }
 
-    std::printf("PPE %s -- GEMM blocking sweep (PLACEHOLDER)\n", ppe::version_string);
-    std::printf("device : %s\n", cpu.name.c_str());
-    std::printf("compiler: %s, ISA baseline: %s\n", ppe::build_compiler(), ppe::build_isa());
-    std::printf("size   : %d x %d\n\n", n, n);
+    const int n = parse_size(argc, argv, 256);
+
+    std::fputs(ppe::to_text(prov).c_str(), stdout);
+    std::printf("size    : %d x %d\n\n", n, n);
 
     const std::size_t elements = static_cast<std::size_t>(n) * n;
-    std::vector<double> a(elements, 1.0);
-    std::vector<double> b(elements, 1.0);
+    std::vector<double> a(elements);
+    std::vector<double> b(elements);
     std::vector<double> c(elements);
+
+    // Seeded explicitly: a measurement you cannot re-run on the same data is
+    // not one you can bisect. Small integral values keep the products exactly
+    // representable, so a blocking bug shows up as a real mismatch rather than
+    // as rounding noise.
+    ppe::fill(a, 12345);
+    ppe::fill(b, 67890);
+
+    // Reference: the whole matrix as one tile. Verification is not optional in
+    // a performance sweep -- a blocking bug that drops a tile is usually
+    // faster, and a sweep that records only times reports it as progress.
+    std::vector<double> reference(elements, 0.0);
+    gemm_blocked(a, b, reference, n, n);
 
     // 2*n^3 flops for a square GEMM: one multiply and one add per inner
     // iteration.
     const double flops = 2.0 * static_cast<double>(n) * n * n;
 
-    std::printf("%-8s %12s %12s\n", "block", "seconds", "GFLOP/s");
+    std::printf("%-8s %12s %12s %10s\n", "block", "median s", "GFLOP/s", "verified");
     for (const int block : {16, 32, 64, 128, 256}) {
         if (block > n) continue;
-        std::fill(c.begin(), c.end(), 0.0);
 
-        const auto start = std::chrono::steady_clock::now();
-        gemm_blocked(a, b, c, n, block);
-        const auto stop = std::chrono::steady_clock::now();
+        // The zeroing is inside the timed region: gemm_blocked accumulates into
+        // C, so each repetition must start from the same state to be a
+        // repetition at all. It costs an O(n^2) fill against O(n^3) of work.
+        const double seconds = ppe::time_median(
+            [&] {
+                std::fill(c.begin(), c.end(), 0.0);
+                gemm_blocked(a, b, c, n, block);
+            },
+            3);
 
-        const double seconds = std::chrono::duration<double>(stop - start).count();
-        std::printf("%-8d %12.6f %12.2f\n", block, seconds,
-                    seconds > 0.0 ? flops / seconds / 1e9 : 0.0);
+        const bool ok = ppe::matches(c, reference);
+        std::printf("%-8d %12.6f %12.2f %10s\n", block, seconds,
+                    seconds > 0.0 ? flops / seconds / 1e9 : 0.0,
+                    ok ? "yes" : "NO");
+        if (!ok) {
+            std::printf("       ^ block %d does not reproduce the reference\n", block);
+        }
     }
 
     std::printf(
-        "\nNOTE: placeholder measurement -- single trial, no warm-up, block sizes\n"
-        "      not derived from the detected cache hierarchy.\n");
+        "\nNOTE: placeholder measurement -- block sizes are hardcoded rather than\n"
+        "      derived from the detected cache hierarchy, and only one kernel is\n"
+        "      measured. See docs/plans/first-application.md.\n");
     return 0;
 }
