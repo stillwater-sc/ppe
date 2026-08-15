@@ -37,10 +37,16 @@ struct cluster_measurement {
 
     double l1d_latency_ns = 0.0;
     double l2_latency_ns = 0.0;
-    double dram_latency_ns = 0.0;
     double l1d_read_gbs = 0.0;
     double l2_read_gbs = 0.0;
-    double dram_read_gbs = 0.0;
+
+    /// The far probe: a working set outside the cluster's private caches. Its
+    /// name is whichever level it actually fits, since a caller may ask for a
+    /// size that is still cache resident.
+    std::string far_level = "DRAM";
+    std::size_t far_bytes = 0;
+    double far_latency_ns = 0.0;
+    double far_read_gbs = 0.0;
 };
 
 /// Measure every cluster in turn, pinning to its first CPU.
@@ -96,10 +102,20 @@ inline std::vector<cluster_measurement> measure_clusters(const platform_topology
             m.l2_latency_ns = probe::chase_latency_ns(ws, line);
             m.l2_read_gbs = probe::stream_read_gbs(ws);
         }
-        // The shared path to memory, measured from each cluster: on a
-        // heterogeneous part the clusters do not reach DRAM equally.
-        m.dram_latency_ns = probe::chase_latency_ns(dram_bytes, line);
-        m.dram_read_gbs = probe::stream_read_gbs(dram_bytes);
+        // The shared path out of the cluster. NAMED FOR THE LEVEL THE WORKING
+        // SET ACTUALLY LANDS IN, not assumed to be DRAM: 8 MiB against a
+        // 128 MiB L3 is an L3 measurement, and labelling it "DRAM" produced a
+        // 17 ns "DRAM latency" in CI that was correct as a number and wrong as
+        // a claim.
+        m.far_bytes = dram_bytes;
+        m.far_level = "DRAM";
+        if (t.l3_bytes != 0 && dram_bytes <= t.l3_bytes) {
+            m.far_level = "L3";
+        } else if (c.l2_bytes != 0 && dram_bytes <= c.l2_bytes) {
+            m.far_level = "L2";
+        }
+        m.far_latency_ns = probe::chase_latency_ns(dram_bytes, line);
+        m.far_read_gbs = probe::stream_read_gbs(dram_bytes);
     }
     return out;
 }
@@ -236,7 +252,7 @@ inline std::string to_ascii(const platform_topology& t,
             struct { const char* n; double lat; double bw; } rows[] = {
                 {"L1d", m.l1d_latency_ns, m.l1d_read_gbs},
                 {"L2", m.l2_latency_ns, m.l2_read_gbs},
-                {"DRAM", m.dram_latency_ns, m.dram_read_gbs},
+                {m.far_level.c_str(), m.far_latency_ns, m.far_read_gbs},
             };
             for (const auto& r : rows) {
                 if (r.lat <= 0.0 && r.bw <= 0.0) continue;
@@ -389,7 +405,7 @@ inline std::string to_html(const platform_topology& t, const provenance& prov,
             struct { const char* n; double lat; double bw; } mrows[] = {
                 {"L1d", m.l1d_latency_ns, m.l1d_read_gbs},
                 {"L2", m.l2_latency_ns, m.l2_read_gbs},
-                {"DRAM", m.dram_latency_ns, m.dram_read_gbs},
+                {m.far_level.c_str(), m.far_latency_ns, m.far_read_gbs},
             };
             char nb[96];
             for (const auto& r : mrows) {

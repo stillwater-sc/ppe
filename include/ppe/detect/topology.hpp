@@ -452,6 +452,15 @@ inline platform_topology topology_win32() {
         }
         c.l2_sharing_cores = cores_under(l2.first);
 
+        // Logical processor ids for this cluster, as bit indices of the group
+        // mask. Without these there is nothing to pin to, and the per-cluster
+        // measurement silently degrades to unpinned -- which is what the first
+        // version did on every Windows machine while SetThreadAffinityMask sat
+        // there unused. Group 0 only, matching pin_current_thread.
+        for (int bit = 0; bit < 64; ++bit) {
+            if ((l2.first >> bit) & 1u) c.cpu_ids.push_back(bit);
+        }
+
         // Attach the L1 instances belonging to this cluster. Any L1d whose mask
         // overlaps the L2's belongs to a core in this cluster; its own mask
         // gives the real sharing count, which is 1 for a private L1d and more
