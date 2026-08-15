@@ -52,17 +52,55 @@ void print_bytes(const char* label, std::size_t value) {
     }
 }
 
+/// Cache line with its sharing count. bytes / sharing_cores is the per-core
+/// budget a model should spend, but the two are printed separately: this
+/// describes the machine, and how to spend a shared cache is a modelling
+/// decision. 0 sharers means the topology could not be read -- which is not the
+/// same as "private", and is not printed as 1.
+void print_cache(const char* label, std::size_t bytes, std::size_t sharers) {
+    if (bytes == 0) {
+        std::printf("  %-22s not detected\n", label);
+        return;
+    }
+    char size_buf[32];
+    if (bytes >= 1024 * 1024) {
+        std::snprintf(size_buf, sizeof(size_buf), "%.4g MiB",
+                      static_cast<double>(bytes) / (1024.0 * 1024.0));
+    } else {
+        std::snprintf(size_buf, sizeof(size_buf), "%.4g KiB",
+                      static_cast<double>(bytes) / 1024.0);
+    }
+
+    if (sharers == 0) {
+        std::printf("  %-22s %-10s (sharing unknown)\n", label, size_buf);
+    } else if (sharers == 1) {
+        std::printf("  %-22s %-10s (private)\n", label, size_buf);
+    } else {
+        std::printf("  %-22s %-10s (shared by %zu cores, %.4g KiB/core)\n", label,
+                    size_buf, sharers,
+                    static_cast<double>(bytes) / sharers / 1024.0);
+    }
+}
+
 void print_text(const ppe::provenance& p) {
     const ppe::device_attributes& a = p.cpu;
     std::fputs(ppe::to_text(p).c_str(), stdout);
-    std::printf("\n%s:\n", ppe::to_string(a.kind));
+    std::printf("\n%s (via %s):\n", ppe::to_string(a.kind),
+                a.source.empty() ? "no backend" : a.source.c_str());
+    if (!a.vendor.empty()) {
+        std::printf("  %-22s %s\n", "vendor", a.vendor.c_str());
+    }
     print_field("logical processors", a.logical_processors);
     print_field("physical cores", a.physical_cores);
     print_field("NUMA domains", a.numa_domains);
-    print_bytes("L1d", a.l1d_bytes);
-    print_bytes("L2", a.l2_bytes);
-    print_bytes("L3", a.l3_bytes);
+    print_cache("L1d", a.l1d_bytes, a.l1d_sharing_cores);
+    print_cache("L2", a.l2_bytes, a.l2_sharing_cores);
+    print_cache("L3", a.l3_bytes, a.l3_sharing_cores);
     print_bytes("cache line", a.cache_line_bytes);
+
+    std::printf(
+        "\nDetection is affinity-aware: it describes the cores this process may run\n"
+        "on. Run under taskset to see the hierarchy of a specific core type.\n");
 }
 
 }  // namespace

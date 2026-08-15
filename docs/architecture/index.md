@@ -18,24 +18,48 @@ repository worth designing rather than accreting.
 
 ## Attribute detection
 
-`include/ppe/platform.hpp` holds the interface. Today it reports only what is
-portably available from the standard library and the compiler's predefined
-macros: hardware concurrency, the compiler, and the ISA baseline the translation
-unit was compiled for. Everything else reports "not detected".
+`include/ppe/platform.hpp` holds the **schema** and stays free of OS headers, so
+a consumer that only wants to read an attribute set someone else produced does
+not drag a header tree behind it. `include/ppe/detect/cpu.hpp` holds the
+**backends**, which pull in sysfs, sysctl, CPUID and `<windows.h>` as needed.
 
-That distinction is deliberate. Zero means *not detected*, never *zero* — a
-study must be able to tell an absent value from a measured one, and a machine
-model that silently reports a zero-byte L3 produces confident nonsense
-downstream.
+Zero means *not detected*, never *zero* — a study must be able to tell an absent
+value from a measured one, and a machine model that silently reports a
+zero-byte L3 produces confident nonsense downstream. `sharing_cores == 0` means
+the topology was unreadable, which is **not** the same as "private" and is never
+reported as 1.
 
-### Per-platform backends
+### CPU backend (implemented)
 
-Real detection is not portable code. It is a common interface with a backend per
-platform:
+| Platform | Source |
+|---|---|
+| Linux (all ISAs) | `/sys/devices/system/cpu`, scanned over the affinity mask |
+| Linux fallback | CPUID, if sysfs is unavailable (a stripped container) |
+| macOS | `sysctl`, `hw.perflevel0.*` on Apple silicon |
+| Windows (all ISAs) | `GetLogicalProcessorInformationEx` |
+
+**sysfs is preferred over CPUID on Linux, x86 included**, for three reasons:
+
+- **Determinism.** CPUID describes whichever core the calling thread happens to
+  be on, so on a hybrid part the same binary reports a P-core or an E-core
+  hierarchy run to run.
+- **Sharing.** sysfs publishes `shared_cpu_list` per cache, so a cluster L2
+  shared by four cores can be discounted. CPUID's equivalent counts *logical*
+  processors and needs threads-per-core to interpret.
+- **Affinity.** The scan covers exactly the CPUs this process may run on, so
+  under `taskset` detection describes where the work will actually run. This
+  matters more here than in the library this was adapted from: PPE's own
+  guidance is to pin the process, so detection and measurement must agree about
+  which core they are discussing.
+
+Where several caches are candidates, the one with the **smallest per-core
+budget** wins, so a model's blocks fit whichever core the work lands on rather
+than overflowing the smaller kind.
+
+### Still to build
 
 | Target | Sources |
 |---|---|
-| CPU | CPUID; `/sys/devices/system/cpu` on Linux; `sysctl` on macOS; `GetLogicalProcessorInformationEx` on Windows; hwloc for topology and NUMA |
 | GPU | CUDA / HIP / Level Zero / Metal runtime queries — SM or CU counts, on-chip memory, clock domains |
 | KPU | The `kpu-sim` and `kpu-hw` interfaces — PE fabric geometry, scratchpad and L1/L2/L3 tile capacities |
 

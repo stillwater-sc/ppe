@@ -17,6 +17,38 @@ curve is flat at ~1.0 ns to 48 KiB, steps 3x, is flat at ~3.06 ns to ~1 MiB,
 steps again, and plateaus around 82 ns — against `lscpu`'s 48 KiB L1d per
 P-core, 1.25 MiB L2 per P-core, and 25 MiB shared L3.
 
+### Claimed vs measured
+
+Since phase 2 the sweep ends by comparing what the OS claims against what it
+measured. A claimed size is consistent with a knee when it falls in
+`[below, above)`: the working set at `below` still fit the level, the one at
+`above` did not.
+
+Pinned to a P-core on the i7-12700K, all three levels agree:
+
+```
+level         claimed   measured
+L1d            48 KiB   consistent: step at 48 KiB -> 64 KiB
+L2           1.25 MiB   consistent: step at 1 MiB -> 1.5 MiB
+L3             25 MiB   consistent: step at 24 MiB -> 32 MiB
+```
+
+Run *unpinned* on the same hybrid machine, the tool disagrees with itself — and
+says so:
+
+```
+L1d            32 KiB   NO step bracketing this size
+L2              2 MiB   NO step bracketing this size
+L3             25 MiB   consistent: step at 24 MiB -> 32 MiB
+```
+
+Both halves are behaving correctly. Detection is affinity-aware and, unpinned,
+selects the smallest per-core budget on the machine — the E-cluster's 32 KiB L1d
+and 2 MiB L2-shared-by-four. The sweep meanwhile ran mostly on P-cores. L3 is
+shared by every core, so it agrees either way. This is the tool answering "does
+this machine tell the truth about itself?" with a useful *no*, and naming the
+reason.
+
 ### Two lessons it taught
 
 **A dependent chase must walk a single cycle, not any permutation.** A random

@@ -17,6 +17,7 @@
 #pragma once
 
 #include <ppe/build_info.hpp>
+#include <ppe/detect/cpu.hpp>
 #include <ppe/platform.hpp>
 #include <ppe/version.hpp>
 
@@ -138,7 +139,14 @@ inline std::string to_csv_comment(const provenance& p) {
       << "# cmake_type=" << p.cmake_type << "\n"
       << "# cxx_flags=" << p.cxx_flags << "\n"
       << "# device=" << p.cpu.name << "\n"
-      << "# logical_processors=" << p.cpu.logical_processors << "\n";
+      << "# detect_source=" << p.cpu.source << "\n"
+      << "# logical_processors=" << p.cpu.logical_processors << "\n"
+      << "# physical_cores=" << p.cpu.physical_cores << "\n"
+      << "# numa_domains=" << p.cpu.numa_domains << "\n"
+      << "# l1d_bytes=" << p.cpu.l1d_bytes << "\n"
+      << "# l2_bytes=" << p.cpu.l2_bytes << "\n"
+      << "# l3_bytes=" << p.cpu.l3_bytes << "\n"
+      << "# cache_line_bytes=" << p.cpu.cache_line_bytes << "\n";
     return o.str();
 }
 
@@ -160,12 +168,18 @@ inline std::string to_json(const provenance& p) {
       << "  \"device\": {\n"
       << "    \"kind\": \"" << to_string(p.cpu.kind) << "\",\n"
       << "    \"name\": \"" << json_escape(p.cpu.name) << "\",\n"
+      << "    \"vendor\": \"" << json_escape(p.cpu.vendor) << "\",\n"
+      << "    \"source\": \"" << json_escape(p.cpu.source) << "\",\n"
       << "    \"logical_processors\": " << p.cpu.logical_processors << ",\n"
       << "    \"physical_cores\": " << p.cpu.physical_cores << ",\n"
       << "    \"numa_domains\": " << p.cpu.numa_domains << ",\n"
       << "    \"l1d_bytes\": " << p.cpu.l1d_bytes << ",\n"
+      << "    \"l1d_assoc\": " << p.cpu.l1d_assoc << ",\n"
+      << "    \"l1d_sharing_cores\": " << p.cpu.l1d_sharing_cores << ",\n"
       << "    \"l2_bytes\": " << p.cpu.l2_bytes << ",\n"
+      << "    \"l2_sharing_cores\": " << p.cpu.l2_sharing_cores << ",\n"
       << "    \"l3_bytes\": " << p.cpu.l3_bytes << ",\n"
+      << "    \"l3_sharing_cores\": " << p.cpu.l3_sharing_cores << ",\n"
       << "    \"cache_line_bytes\": " << p.cpu.cache_line_bytes << "\n"
       << "  }\n"
       << "}\n";

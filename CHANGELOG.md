@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Phase 2** (#4): real CPU detection backends (`include/ppe/detect/`). Linux
+  sysfs scanned over the affinity mask, macOS `sysctl`, and a Windows
+  `GetLogicalProcessorInformationEx` backend — the last covering a
+  configuration the adapted-from library could not reach at all (Windows
+  ARM64). Detects cache sizes, associativity, per-level sharing in physical
+  cores, physical core count, NUMA domains, vendor and brand.
+  `memory_hierarchy` now reports claimed vs. measured side by side.
 - **Phase 1** (#4): `applications/memory_hierarchy` — the first real study.
   Dependent pointer-chase latency and streaming-read bandwidth against
   working-set size, plus a thread-scaling sweep. Emits CSV with provenance

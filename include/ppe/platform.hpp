@@ -45,13 +45,35 @@ inline const char* to_string(device_kind k) {
 struct device_attributes {
     device_kind kind = device_kind::cpu;
     std::string name = "unknown";
+    std::string vendor;                   // "GenuineIntel", "AuthenticAMD", ...
+
     unsigned    logical_processors = 0;   // hardware threads
-    unsigned    physical_cores = 0;       // not portably available; 0 here
-    unsigned    numa_domains = 0;         // 0 here
-    std::size_t l1d_bytes = 0;            // 0 here
-    std::size_t l2_bytes = 0;             // 0 here
-    std::size_t l3_bytes = 0;             // 0 here
-    std::size_t cache_line_bytes = 0;     // 0 here
+    unsigned    physical_cores = 0;       // SMT siblings collapsed
+    unsigned    numa_domains = 0;
+
+    std::size_t l1d_bytes = 0;            // DATA cache, never the I-cache
+    std::size_t l1d_assoc = 0;            // ways
+    std::size_t l2_bytes = 0;
+    std::size_t l3_bytes = 0;             // 0 is legitimate: some parts have none
+    std::size_t cache_line_bytes = 0;
+
+    // How many distinct PHYSICAL cores share each level. The per-core budget a
+    // model should use is bytes / sharing_cores, but the two are reported
+    // separately rather than pre-divided: this struct describes the machine, and
+    // how to spend a shared cache is a modelling decision that belongs with the
+    // model.
+    //
+    // Counted in cores, not logical CPUs, and the difference is not pedantic. An
+    // SMT pair shares its L1d and L2, so counting CPUs would halve both on any
+    // hyperthreaded machine; a 4-core E-cluster sharing one L2 is the case that
+    // genuinely needs discounting.
+    std::size_t l1d_sharing_cores = 0;
+    std::size_t l2_sharing_cores = 0;
+    std::size_t l3_sharing_cores = 0;
+
+    /// Where the numbers came from, so a disagreement with measurement can be
+    /// attributed. "sysfs", "cpuid", "sysctl", "win32", or "" if nothing ran.
+    std::string source;
 };
 
 // The ISA baseline this translation unit was compiled for.
@@ -89,9 +111,16 @@ inline const char* build_compiler() {
 #endif
 }
 
-// Detect the host CPU. PLACEHOLDER: reports hardware_concurrency and nothing
-// else. Cache sizes, topology and NUMA need the per-platform backends above.
-inline device_attributes detect_cpu() {
+// Portable floor: hardware concurrency and nothing else.
+//
+// The real backends live in <ppe/detect/cpu.hpp>, which pulls in sysfs, sysctl,
+// CPUID and <windows.h> depending on the platform. This header stays free of
+// those so the SCHEMA can be included anywhere -- by a consumer that only wants
+// to read an attribute set someone else produced, for instance -- without
+// dragging an OS header tree behind it.
+//
+// Use ppe::detect_cpu() from <ppe/detect/cpu.hpp> for a populated set.
+inline device_attributes minimal_cpu_attributes() {
     device_attributes a;
     a.kind = device_kind::cpu;
     a.name = std::string("host CPU (") + build_isa() + ")";

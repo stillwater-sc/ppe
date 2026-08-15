@@ -316,35 +316,110 @@ const char* parse_str(int argc, char** argv, std::string_view flag) {
     return nullptr;
 }
 
-/// Report where latency steps up by more than `factor`, as an INFERENCE.
+/// A step up in latency between two adjacent working sets: `below` still fits
+/// the level, `above` does not.
+struct knee {
+    std::size_t below = 0;
+    std::size_t above = 0;
+    double      ns_below = 0.0;
+    double      ns_above = 0.0;
+};
+
+/// Find where latency steps up by more than 1.5x.
 ///
-/// A knee in the latency curve is where a working set stops fitting in a level.
-/// This is not a cache-size detector: a step can also come from TLB reach or
-/// from a prefetcher giving up, and a level whose size falls between two
-/// samples is reported at the sample above it. Phase 2 compares these against
-/// what the OS claims, which is the point at which either can be trusted.
-void report_knees(const std::vector<row>& rows) {
-    std::printf("\nInferred level boundaries (latency steps > 1.5x):\n");
-    bool any = false;
+/// This is an INFERENCE, not a cache-size detector: a step can also come from
+/// TLB reach or from a prefetcher giving up, and a level whose size falls
+/// between two samples is bracketed rather than pinpointed.
+std::vector<knee> find_knees(const std::vector<row>& rows) {
+    std::vector<knee> knees;
     const row* prev = nullptr;
     for (const row& r : rows) {
         if (r.probe != "latency") continue;
         if (prev != nullptr && prev->value > 0.0 && r.value > prev->value * 1.5) {
-            std::printf("  %-12s -> %-12s  %.2f ns -> %.2f ns  (%.1fx)\n",
-                        human_size(prev->working_set_bytes).c_str(),
-                        human_size(r.working_set_bytes).c_str(),
-                        prev->value, r.value, r.value / prev->value);
-            any = true;
+            knees.push_back({prev->working_set_bytes, r.working_set_bytes,
+                             prev->value, r.value});
         }
         prev = &r;
     }
-    if (!any) {
+    return knees;
+}
+
+void report_knees(const std::vector<knee>& knees) {
+    std::printf("\nInferred level boundaries (latency steps > 1.5x):\n");
+    if (knees.empty()) {
         std::printf("  none -- the sweep may not span a level boundary\n");
+        return;
     }
-    std::printf(
-        "  NOTE: inferred from the curve, not detected. A step can also come from\n"
-        "        TLB reach or a prefetcher giving up. Phase 2 cross-checks these\n"
-        "        against what the OS claims.\n");
+    for (const knee& k : knees) {
+        std::printf("  %-12s -> %-12s  %.2f ns -> %.2f ns  (%.1fx)\n",
+                    human_size(k.below).c_str(), human_size(k.above).c_str(),
+                    k.ns_below, k.ns_above, k.ns_above / k.ns_below);
+    }
+}
+
+/// Compare what the OS CLAIMS against what the sweep MEASURED.
+///
+/// This is the point of the whole exercise. Detection asks the OS; the sweep
+/// asks the hardware. Where they agree, the machine model is trustworthy; where
+/// they disagree, the measurement describes the machine you are running on and
+/// the claim describes something else -- a VM's passthrough, a hybrid part whose
+/// cores differ, or a cache the process cannot actually use all of.
+///
+/// A claimed size is consistent with a knee when it falls in [below, above): the
+/// working set at `below` still fit the level, and the one at `above` did not.
+void report_comparison(const ppe::device_attributes& cpu, const std::vector<knee>& knees,
+                       bool pinned_hint) {
+    std::printf("\nClaimed (%s) vs measured:\n",
+                cpu.source.empty() ? "no backend" : cpu.source.c_str());
+    std::printf("%-6s %14s   %s\n", "level", "claimed", "measured");
+
+    struct entry { const char* label; std::size_t bytes; std::size_t sharers; };
+    const entry levels[] = {
+        {"L1d", cpu.l1d_bytes, cpu.l1d_sharing_cores},
+        {"L2",  cpu.l2_bytes,  cpu.l2_sharing_cores},
+        {"L3",  cpu.l3_bytes,  cpu.l3_sharing_cores},
+    };
+
+    bool any_disagreement = false;
+    for (const entry& e : levels) {
+        if (e.bytes == 0) {
+            std::printf("%-6s %14s   %s\n", e.label, "not detected",
+                        "-- nothing to compare against");
+            continue;
+        }
+
+        const knee* match = nullptr;
+        for (const knee& k : knees) {
+            if (e.bytes >= k.below && e.bytes < k.above) { match = &k; break; }
+        }
+
+        char claimed[32];
+        std::snprintf(claimed, sizeof(claimed), "%s", human_size(e.bytes).c_str());
+
+        if (match != nullptr) {
+            std::printf("%-6s %14s   consistent: step at %s -> %s\n", e.label, claimed,
+                        human_size(match->below).c_str(),
+                        human_size(match->above).c_str());
+        } else {
+            std::printf("%-6s %14s   NO step bracketing this size\n", e.label, claimed);
+            any_disagreement = true;
+        }
+    }
+
+    if (any_disagreement) {
+        std::printf(
+            "\n  A claimed size with no step around it means the sweep did not see that\n"
+            "  level where the OS says it is. Usual causes, in order of likelihood:\n"
+            "    - the process is not pinned, so the sweep migrated between core types\n"
+            "    - the sweep does not span the level (widen --min-kib / --max-mib)\n"
+            "    - the level is shared and another tenant is using it\n");
+    }
+    if (pinned_hint) {
+        std::printf(
+            "\n  NOTE: detection is affinity-aware -- it describes the cores this process\n"
+            "  may run on. On a hybrid machine an unpinned run detects one core type and\n"
+            "  may measure another. Pin with taskset for the two halves to agree.\n");
+    }
 }
 
 bool write_csv(const char* path, const ppe::provenance& prov, const std::vector<row>& rows) {
@@ -409,7 +484,15 @@ int main(int argc, char** argv) {
         std::fflush(stdout);
     }
 
-    report_knees(rows);
+    const std::vector<knee> knees = find_knees(rows);
+    report_knees(knees);
+
+    // Affinity-aware detection plus more than one visible core means an
+    // unpinned run can detect one core type and measure another.
+    const bool hybrid_risk =
+        (prov.cpu.source == "sysfs" || prov.cpu.source == "win32") &&
+        prov.cpu.physical_cores > 1;
+    report_comparison(prov.cpu, knees, hybrid_risk);
 
     if (!ppe::has_flag(argc, argv, "--no-threads")) {
         const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
