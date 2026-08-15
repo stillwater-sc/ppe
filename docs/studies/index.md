@@ -186,18 +186,62 @@ requirement here, not a scalability preference.
 
 ## Blocking studies
 
-> **Status: scaffolding.** `app_blocking_study` is a placeholder — a hardcoded
-> block-size sweep over a naive ijk GEMM. It shows the shape of a study without
-> being one.
+`blocking_study` sweeps GEMM tile sizes against the **detected** cache
+hierarchy. A blocked GEMM with square tile `b` holds three tiles live -- an A
+panel, a B panel, and the C tile -- so its working set is `3 * b^2 * 8` bytes,
+and setting that equal to a cache's capacity gives the largest tile that level
+can hold:
 
-The question: how do tiling parameters interact with the memory hierarchy that
-is actually present, rather than the one the algorithm assumed?
+```
+b = sqrt(S / 24)
+```
 
-This is where the detection layer earns its place. A blocking sweep that
-hardcodes 16/32/64/128 is measuring arbitrary numbers; a sweep whose block sizes
-are derived from the detected L1d, L2 and L3 sizes is measuring the hypothesis.
-Wiring `applications/blocking_study` to `ppe::detect_cpu()` is the first real
-step in this workstream.
+Each detected level therefore yields a candidate block size, annotated in the
+output, alongside a ladder of neighbours -- without neighbours a "winner" is
+just the largest of three arbitrary points.
+
+On the i7-12700K, pinned:
+
+```
+Detected hierarchy (sysfs):
+  L1d  48 KiB     -> block   40  (3 tiles = 37.5 KiB)
+  L2   1.25 MiB   -> block  232  (3 tiles = 1.23 MiB)
+  L3   25 MiB     -> block 1040  (3 tiles = 24.8 MiB)  shared by 12 cores
+```
+
+### The result is a negative one, and it took work to state honestly
+
+At `--size 1024` the answer is stable across runs: **no cache-derived block
+reaches the top band.** Block 1024 -- unblocked, one tile -- and block 32 win,
+neither of which the model predicts. That is explicable: at n=1024 three
+matrices are 24 MiB against a 25 MiB L3, so the whole problem nearly fits the
+last level and blocking for L1 or L2 buys little.
+
+Getting to a stable statement required two corrections, both of which are the
+same mistake in different clothes.
+
+**A winner picked from noise.** The first version reported the single best
+block. Consecutive runs named 256, then 512, then 256 -- the top candidates sat
+within ~5% of each other, and the argmax moved with the noise while the
+conclusion was restated at full confidence each time. `ppe::time_with_spread`
+now returns the observed spread per sample, and every block within the noise
+floor of the best is reported as indistinguishable.
+
+**A conclusion drawn from a sweep that cannot discriminate.** With the band in
+place, consecutive runs at `--size 512` still reported "consistent with the
+model" and "the model does not hold" -- opposite conclusions, because band
+membership moved with the noise floor. The fix is not a better tiebreak. When
+half or more of the candidates fall inside the band, the study now says the
+sweep does not discriminate and names what would fix it: a larger size, pinning,
+a fixed clock, a quiet machine. **A sweep in which most candidates are
+indistinguishable has not measured a preference, and saying so is the result.**
+
+### Still simplified
+
+One kernel, one thread, square tiles, no packing. A production GEMM uses
+rectangular tiles chosen per level, packs panels into contiguous buffers, and
+has a register-blocked micro-kernel -- and those choices interact with this one.
+`mtl5/ppe` walks that progression in six documented steps.
 
 ## What a believable measurement needs
 

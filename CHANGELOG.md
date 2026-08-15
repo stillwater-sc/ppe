@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `blocking_study` now derives its block sizes from the detected cache
+  hierarchy (`b = sqrt(S/24)` for a three-tile working set) instead of
+  hardcoding them, annotates each block with the level it fits, and reports
+  whether the model's prediction survives. It refuses to draw a conclusion when
+  the sweep cannot discriminate.
+- `ppe::time_with_spread` in the harness: median plus observed spread, so a
+  sweep can tell a real peak from a flat region.
 - **Trace workstream**: `include/ppe/trace.hpp`, a header-only span recorder
   exporting Chrome Trace Event Format (readable by Perfetto UI,
   `chrome://tracing`, speedscope). No allocation or locks on the hot path,

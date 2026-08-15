@@ -48,6 +48,43 @@ double time_median(F&& f, std::size_t reps) {
     return t[t.size() / 2];
 }
 
+/// Median plus the observed spread over `reps` calls, after one warm-up.
+///
+/// The spread is what tells a real peak from a flat region. A sweep that keeps
+/// only the median can report a "best" parameter chosen entirely by noise, and
+/// then draw a conclusion from it -- the winner changes run to run while the
+/// conclusion is stated with the same confidence each time.
+struct timing {
+    double median = 0.0;
+    double min = 0.0;
+    double max = 0.0;
+
+    /// (max - min) / median: a crude but honest bound on how much of a
+    /// difference between two samples could be noise.
+    double relative_spread() const {
+        return median > 0.0 ? (max - min) / median : 0.0;
+    }
+};
+
+template <typename F>
+timing time_with_spread(F&& f, std::size_t reps) {
+    f();  // warm up: caches, page faults, branch predictors
+    std::vector<double> t;
+    t.reserve(reps);
+    for (std::size_t r = 0; r < reps; ++r) {
+        const auto t0 = std::chrono::steady_clock::now();
+        f();
+        const auto t1 = std::chrono::steady_clock::now();
+        t.push_back(std::chrono::duration<double>(t1 - t0).count());
+    }
+    std::sort(t.begin(), t.end());
+    timing out;
+    out.median = t[t.size() / 2];
+    out.min = t.front();
+    out.max = t.back();
+    return out;
+}
+
 /// Repetitions that keep each measurement around a tenth of a second without
 /// spending minutes on the slow end of a sweep.
 inline std::size_t reps_for(double seconds_estimate) {
