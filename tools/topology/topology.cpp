@@ -18,6 +18,8 @@
 #include <ppe/version.hpp>
 
 #include <cstdio>
+#include <cstdlib>
+#include <vector>
 
 namespace {
 
@@ -34,6 +36,8 @@ void print_help() {
         "      --ascii      draw the cluster topology as an ASCII tree\n"
         "      --html PATH  write a self-contained HTML topology report\n"
         "      --topo-json  emit the full cluster topology as JSON\n"
+        "      --measure    measure latency and bandwidth per cluster (slow)\n"
+        "      --dram-mib N working set for the measured DRAM rows (default 64)\n"
         "\n"
         "PLACEHOLDER: only portable attributes are reported. Cache sizes, NUMA\n"
         "topology, and GPU/KPU devices need the per-platform backends described\n"
@@ -152,14 +156,25 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    const bool measure = ppe::has_flag(argc, argv, "--measure");
+    std::size_t dram_mib = 64;
+    if (const char* v = ppe::flag_value(argc, argv, "--dram-mib"); v != nullptr) {
+        const int n = std::atoi(v);
+        if (n > 0) dram_mib = static_cast<std::size_t>(n);
+    }
+    const std::size_t dram_bytes = dram_mib * 1024u * 1024u;
+
     if (const char* html = ppe::flag_value(argc, argv, "--html"); html != nullptr) {
         const ppe::platform_topology topo = ppe::detect_topology();
+        const std::vector<ppe::report::cluster_measurement> meas =
+            measure ? ppe::report::measure_clusters(topo, dram_bytes)
+                    : std::vector<ppe::report::cluster_measurement>{};
         std::FILE* f = std::fopen(html, "w");
         if (f == nullptr) {
             std::fprintf(stderr, "error: cannot write %s\n", html);
             return 1;
         }
-        const std::string page = ppe::report::to_html(topo, prov);
+        const std::string page = ppe::report::to_html(topo, prov, meas);
         std::fwrite(page.data(), 1, page.size(), f);
         std::fclose(f);
         std::printf("wrote %zu bytes of HTML to %s\n", page.size(), html);
@@ -167,7 +182,16 @@ int main(int argc, char** argv) {
     }
 
     if (ppe::has_flag(argc, argv, "--ascii")) {
-        std::fputs(ppe::report::to_ascii(ppe::detect_topology()).c_str(), stdout);
+        const ppe::platform_topology topo = ppe::detect_topology();
+        if (measure) {
+            std::printf("measuring %zu clusters (pin with taskset for a single one)...\n\n",
+                        topo.clusters.size());
+            std::fflush(stdout);
+        }
+        const std::vector<ppe::report::cluster_measurement> meas =
+            measure ? ppe::report::measure_clusters(topo, dram_bytes)
+                    : std::vector<ppe::report::cluster_measurement>{};
+        std::fputs(ppe::report::to_ascii(topo, meas).c_str(), stdout);
         return 0;
     }
 

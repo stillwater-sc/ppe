@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Per-cluster latency and bandwidth (#6): `tool_topology --measure` pins to one
+  CPU of each cluster and reports measured figures beside the claimed
+  capacities, in ASCII and HTML. Adds `include/ppe/detect/affinity.hpp`
+  (pinning, with macOS reporting honestly that it cannot) and
+  `include/ppe/probe/memory.hpp` (the shared chase and streaming-read probes,
+  now used by `memory_hierarchy` too rather than duplicated).
+
 - `include/ppe/detect/topology.hpp` and `include/ppe/report/topology_report.hpp`
   (#6): cluster topology as a first-class structure -- a cluster being the cores
   sharing one L2 instance -- with Linux/macOS/Windows backends, core-capability

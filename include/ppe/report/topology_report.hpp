@@ -12,14 +12,97 @@
 // topology dump is for.
 #pragma once
 
+#include <ppe/detect/affinity.hpp>
 #include <ppe/detect/topology.hpp>
+#include <ppe/probe/memory.hpp>
 #include <ppe/provenance.hpp>
 
 #include <cstdio>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace ppe::report {
+
+/// What was measured on one cluster, by pinning to one of its CPUs.
+///
+/// Kept OUT of core_cluster deliberately: that struct is what the machine
+/// claims about itself, and mixing a measurement into it would make the two
+/// indistinguishable a week later. The claimed-vs-measured separation is the
+/// repository's central discipline, not a presentation detail.
+struct cluster_measurement {
+    bool   attempted = false;
+    bool   pinned = false;
+    std::string note;        ///< why not pinned, when it was not
+
+    double l1d_latency_ns = 0.0;
+    double l2_latency_ns = 0.0;
+    double dram_latency_ns = 0.0;
+    double l1d_read_gbs = 0.0;
+    double l2_read_gbs = 0.0;
+    double dram_read_gbs = 0.0;
+};
+
+/// Measure every cluster in turn, pinning to its first CPU.
+///
+/// The probes run on THIS thread after pinning, so the measurement and the
+/// affinity move together. Working sets are half of each level's capacity, for
+/// the reason layer_bandwidth documents: a set equal to capacity does not sit in
+/// that level.
+///
+/// Where pinning is unavailable -- macOS -- the probes still run but the result
+/// is marked unpinned, and the renderers say so rather than attributing a
+/// number to a cluster that may not have produced it.
+inline std::vector<cluster_measurement> measure_clusters(const platform_topology& t,
+                                                         std::size_t dram_bytes = 64u
+                                                                                  << 20) {
+    std::vector<cluster_measurement> out(t.clusters.size());
+    const std::size_t line = t.cache_line_bytes ? t.cache_line_bytes : 64;
+
+    for (std::size_t i = 0; i < t.clusters.size(); ++i) {
+        const core_cluster& c = t.clusters[i];
+
+        // One representative per distinct shape. Measuring all eight identical
+        // P-clusters costs eight times as long to print one line, and copying
+        // one cluster's numbers onto its siblings would attribute a measurement
+        // to hardware that never ran it. The renderer shows the first of each
+        // collapsed run, which is exactly the one measured here.
+        bool already = false;
+        for (std::size_t j = 0; j < i; ++j) {
+            if (out[j].attempted && t.clusters[j].same_shape_as(c)) { already = true; break; }
+        }
+        if (already) continue;
+
+        cluster_measurement& m = out[i];
+        m.attempted = true;
+
+        if (!c.cpu_ids.empty()) {
+            const pin_result pr = pin_current_thread(c.cpu_ids.front());
+            m.pinned = pr.ok;
+            m.note = pr.note;
+        } else if (!affinity_supported()) {
+            m.note = "no pinning on this platform; cluster attribution is a guess";
+        } else {
+            m.note = "no cpu ids recorded for this cluster";
+        }
+
+        if (c.l1d_bytes >= 4096) {
+            const std::size_t ws = c.l1d_bytes / 2;
+            m.l1d_latency_ns = probe::chase_latency_ns(ws, line);
+            m.l1d_read_gbs = probe::stream_read_gbs(ws);
+        }
+        if (c.l2_bytes >= 4096) {
+            const std::size_t ws = c.l2_bytes / 2;
+            m.l2_latency_ns = probe::chase_latency_ns(ws, line);
+            m.l2_read_gbs = probe::stream_read_gbs(ws);
+        }
+        // The shared path to memory, measured from each cluster: on a
+        // heterogeneous part the clusters do not reach DRAM equally.
+        m.dram_latency_ns = probe::chase_latency_ns(dram_bytes, line);
+        m.dram_read_gbs = probe::stream_read_gbs(dram_bytes);
+    }
+    return out;
+}
 
 namespace detail {
 
@@ -76,8 +159,9 @@ inline std::string html_escape(const std::string& s) {
 
 }  // namespace detail
 
-/// ASCII tree of the machine.
-inline std::string to_ascii(const platform_topology& t) {
+/// ASCII tree of the machine. `meas` may be empty.
+inline std::string to_ascii(const platform_topology& t,
+                            const std::vector<cluster_measurement>& meas = {}) {
     std::string s;
     char buf[512];
 
@@ -139,6 +223,38 @@ inline std::string to_ascii(const platform_topology& t) {
                                                     : t.capacity_source.c_str());
             s += buf;
         }
+
+        // Measured figures for the FIRST cluster of a collapsed run. Identical
+        // clusters share a shape, not a measurement, but measuring all eight
+        // P-cores to print one line would be dishonest about what was run.
+        const std::size_t mi = static_cast<std::size_t>(runs[i].cluster - t.clusters.data());
+        if (mi < meas.size() && meas[mi].attempted) {
+            const cluster_measurement& m = meas[mi];
+            std::snprintf(buf, sizeof(buf), "%s    measured%s:\n", pipe,
+                          m.pinned ? " (pinned)" : " (NOT pinned)");
+            s += buf;
+            struct { const char* n; double lat; double bw; } rows[] = {
+                {"L1d", m.l1d_latency_ns, m.l1d_read_gbs},
+                {"L2", m.l2_latency_ns, m.l2_read_gbs},
+                {"DRAM", m.dram_latency_ns, m.dram_read_gbs},
+            };
+            for (const auto& r : rows) {
+                if (r.lat <= 0.0 && r.bw <= 0.0) continue;
+                std::snprintf(buf, sizeof(buf), "%s      %-5s %8.2f ns  %8.2f GB/s\n",
+                              pipe, r.n, r.lat, r.bw);
+                s += buf;
+            }
+            if (!m.pinned && !m.note.empty()) {
+                std::snprintf(buf, sizeof(buf), "%s      ^ %s\n", pipe, m.note.c_str());
+                s += buf;
+            }
+            if (runs[i].count > 1) {
+                std::snprintf(buf, sizeof(buf),
+                              "%s      (one cluster of the %u measured)\n", pipe,
+                              runs[i].count);
+                s += buf;
+            }
+        }
         if (!last) s += "|\n";
     }
 
@@ -158,7 +274,8 @@ inline std::string to_ascii(const platform_topology& t) {
 
 /// Self-contained HTML. No external requests: a report that needs a network to
 /// render is not a report you can keep.
-inline std::string to_html(const platform_topology& t, const provenance& prov) {
+inline std::string to_html(const platform_topology& t, const provenance& prov,
+                           const std::vector<cluster_measurement>& meas = {}) {
     using detail::html_escape;
     std::string h;
     h += "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n";
@@ -197,6 +314,11 @@ inline std::string to_html(const platform_topology& t, const provenance& prov) {
          "td.k{color:var(--mut);padding-right:.75rem;white-space:nowrap}\n"
          ".l3{margin-top:.75rem;padding:.6rem .9rem;border:1px dashed var(--line);"
          "border-radius:8px;font-size:.88rem}\n"
+         ".meas{margin-top:.6rem;padding-top:.5rem;border-top:1px dashed var(--line);"
+         "font-size:.82rem}\n"
+         ".meas b{display:block;font-size:.7rem;text-transform:uppercase;"
+         "letter-spacing:.05em;color:var(--mut);margin-bottom:.25rem}\n"
+         ".warnnote{margin:.35rem 0 0;color:var(--warn);font-size:.78rem}\n"
          ".note{margin-top:1.25rem;padding:.75rem 1rem;border-left:3px solid var(--warn);"
          "background:var(--card);font-size:.88rem}\n"
          "footer{margin-top:2rem;color:var(--mut);font-size:.78rem;"
@@ -256,7 +378,33 @@ inline std::string to_html(const platform_topology& t, const provenance& prov) {
                                 (t.capacity_source.empty() ? "unknown source"
                                                            : t.capacity_source) + ")");
         }
-        h += "</table>\n</div>\n";
+        h += "</table>\n";
+
+        const std::size_t mi = static_cast<std::size_t>(&c - t.clusters.data());
+        if (mi < meas.size() && meas[mi].attempted) {
+            const cluster_measurement& m = meas[mi];
+            h += "<div class=\"meas\"><b>measured";
+            h += m.pinned ? "" : " (not pinned)";
+            h += "</b><table>\n";
+            struct { const char* n; double lat; double bw; } mrows[] = {
+                {"L1d", m.l1d_latency_ns, m.l1d_read_gbs},
+                {"L2", m.l2_latency_ns, m.l2_read_gbs},
+                {"DRAM", m.dram_latency_ns, m.dram_read_gbs},
+            };
+            char nb[96];
+            for (const auto& r : mrows) {
+                if (r.lat <= 0.0 && r.bw <= 0.0) continue;
+                std::snprintf(nb, sizeof(nb), "%.2f ns &middot; %.2f GB/s", r.lat, r.bw);
+                h += "<tr><td class=\"k\">" + std::string(r.n) + "</td><td>" + nb +
+                     "</td></tr>\n";
+            }
+            h += "</table>";
+            if (!m.pinned && !m.note.empty()) {
+                h += "<p class=\"warnnote\">" + html_escape(m.note) + "</p>";
+            }
+            h += "</div>\n";
+        }
+        h += "</div>\n";
     }
     h += "</div>\n";
 

@@ -85,6 +85,40 @@ Rendered by `include/ppe/report/topology_report.hpp` as an ASCII tree, a
 self-contained HTML page, and JSON, so the page and any future visualization
 render from one machine-readable form.
 
+### Measured per cluster
+
+`tool_topology --measure` pins to one CPU of each cluster and runs the shared
+probes from `include/ppe/probe/memory.hpp`, so the structural view carries
+latency and bandwidth alongside the capacities. On the i7-12700K:
+
+| cluster | L1d | L2 | DRAM |
+|---|---|---|---|
+| performance | 1.02 ns / 157 GB/s | 3.67 ns / 116 GB/s | 74.9 ns / 29.1 GB/s |
+| efficiency | 1.05 ns / 77.9 GB/s | 7.47 ns / 70.8 GB/s | 80.1 ns / 19.2 GB/s |
+
+The E-cluster has *lower absolute* L1 latency than the P-cluster — a 3-cycle L1
+at 3.8 GHz beats a 5-cycle L1 at 4.9 — while being roughly half as fast for L1
+bandwidth, half as fast at L2, and reaching DRAM more slowly. None of that is
+visible in a single-valued machine model, which is the argument for the whole
+cluster schema in one table.
+
+Three rules govern this:
+
+**One representative per shape.** Measuring all eight identical P-clusters to
+print one line costs eight times as long, and copying one cluster's numbers onto
+its siblings would attribute a measurement to hardware that never ran it. The
+renderer shows the first of each collapsed run, which is the one measured.
+
+**Measurements live outside `core_cluster`.** That struct is what the machine
+claims about itself; a measurement mixed into it would be indistinguishable from
+a claim a week later.
+
+**Pinning can fail, and then the report says so.** macOS exposes no
+thread-to-processor binding — `THREAD_AFFINITY_POLICY` is a hint and is
+unimplemented on Apple silicon — so the probes still run but the result is
+marked *not pinned* rather than attributed to a cluster that may not have
+produced it.
+
 ### Still to build
 
 | Target | Sources |

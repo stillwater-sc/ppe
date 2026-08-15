@@ -201,6 +201,11 @@ jobs:
           # runners with more than one cluster shape are the macOS ones.
           ./build/tools/tool_topology --ascii
           ./build/tools/tool_topology --topo-json
+          # --measure exercises the per-cluster pinning path, which differs per
+          # platform (pthread_setaffinity_np / SetThreadAffinityMask / none on
+          # macOS). Small working set: this checks that it runs and attributes
+          # correctly, never how fast the runner is.
+          ./build/tools/tool_topology --ascii --measure --dram-mib 8
           ./build/applications/app_memory_hierarchy --min-kib 4 --max-mib 2 --no-threads
 
       - name: Run detection and sweep (Windows)
@@ -210,6 +215,7 @@ jobs:
           .\build\tools\Release\tool_topology.exe --json
           .\build\tools\Release\tool_topology.exe --ascii
           .\build\tools\Release\tool_topology.exe --topo-json
+          .\build\tools\Release\tool_topology.exe --ascii --measure --dram-mib 8
           .\build\applications\Release\app_memory_hierarchy.exe --min-kib 4 --max-mib 2 --no-threads
 
   # -- CMakePresets.json validation ------------------------------------

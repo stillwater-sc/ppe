@@ -39,6 +39,7 @@
 #include <ppe/cli.hpp>
 #include <ppe/harness.hpp>
 #include <ppe/platform.hpp>
+#include <ppe/probe/memory.hpp>
 #include <ppe/provenance.hpp>
 #include <ppe/trace.hpp>
 #include <ppe/version.hpp>
@@ -104,63 +105,16 @@ void print_help() {
 // Latency: dependent pointer chase over a single random cycle
 // ---------------------------------------------------------------------------
 
-/// Build a single cycle visiting every slot exactly once (Sattolo's algorithm).
+/// Nanoseconds per dependent access, from the shared probe.
 ///
-/// A single cycle, not an arbitrary permutation: a permutation decomposes into
-/// several disjoint cycles, and a chase starting in one of them would only ever
-/// visit that cycle's slots -- touching a fraction of the working set while
-/// appearing to sweep all of it, and reporting the latency of a smaller set.
-std::vector<std::size_t> build_cycle(std::size_t slots, std::uint64_t seed) {
-    std::vector<std::size_t> order(slots);
-    std::iota(order.begin(), order.end(), std::size_t{0});
-
-    std::mt19937_64 g(seed);
-    for (std::size_t i = slots - 1; i > 0; --i) {
-        // Sattolo: j strictly less than i, which is what makes the result one
-        // cycle rather than a general permutation.
-        const std::size_t j = static_cast<std::size_t>(g() % i);
-        std::swap(order[i], order[j]);
-    }
-    return order;
-}
-
-/// Nanoseconds per dependent access over a working set of `bytes`.
-///
-/// `line_bytes` must be the machine's real cache line: it is the slot spacing,
-/// and it is what guarantees each hop lands on a line the previous hop did not
-/// fetch.
+/// The implementation moved to include/ppe/probe/memory.hpp when the topology
+/// report needed to run it per cluster. It is the same chase -- single Sattolo
+/// cycle, slot spacing equal to the real cache line -- and keeping one copy is
+/// the point: those two properties each cost a bug to establish.
 double measure_latency_ns(std::size_t bytes, std::size_t line_bytes,
                           std::uint64_t seed) {
     ppe::trace::scope span("latency_probe", "memory");
-    const std::size_t stride = line_bytes / sizeof(std::size_t);
-    const std::size_t slots = bytes / line_bytes;
-    if (slots < 2 || stride == 0) return 0.0;
-
-    // Each slot holds the element index of the next slot in the cycle, so the
-    // chase is `idx = buf[idx]` -- the load's result IS the next address.
-    std::vector<std::size_t> buf(slots * stride, 0);
-    const std::vector<std::size_t> order = build_cycle(slots, seed);
-    for (std::size_t i = 0; i < slots; ++i) {
-        buf[order[i] * stride] = order[(i + 1) % slots] * stride;
-    }
-
-    // Enough accesses to amortize timer overhead, and enough passes over a
-    // small set that it is measured warm rather than while filling.
-    const std::size_t accesses = std::max<std::size_t>(slots * 4, 1u << 18);
-
-    std::size_t sink = 0;
-    const double seconds = ppe::time_median(
-        [&] {
-            std::size_t idx = 0;
-            for (std::size_t k = 0; k < accesses; ++k) {
-                idx = buf[idx];
-            }
-            sink += idx;  // consume: the chase is dead code otherwise
-        },
-        3);
-
-    keep(sink);
-    return seconds / static_cast<double>(accesses) * 1e9;
+    return ppe::probe::chase_latency_ns(bytes, line_bytes, seed);
 }
 
 // ---------------------------------------------------------------------------
