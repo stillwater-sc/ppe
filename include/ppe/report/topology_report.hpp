@@ -39,6 +39,8 @@ struct cluster_measurement {
     double l2_latency_ns = 0.0;
     double l1d_read_gbs = 0.0;
     double l2_read_gbs = 0.0;
+    std::size_t l1d_bytes = 0;   ///< working set used, not the capacity
+    std::size_t l2_bytes = 0;
 
     /// The far probe: a working set outside the cluster's private caches. Its
     /// name is whichever level it actually fits, since a caller may ask for a
@@ -94,11 +96,13 @@ inline std::vector<cluster_measurement> measure_clusters(const platform_topology
 
         if (c.l1d_bytes >= 4096) {
             const std::size_t ws = c.l1d_bytes / 2;
+            m.l1d_bytes = ws;
             m.l1d_latency_ns = probe::chase_latency_ns(ws, line);
             m.l1d_read_gbs = probe::stream_read_gbs(ws);
         }
         if (c.l2_bytes >= 4096) {
             const std::size_t ws = c.l2_bytes / 2;
+            m.l2_bytes = ws;
             m.l2_latency_ns = probe::chase_latency_ns(ws, line);
             m.l2_read_gbs = probe::stream_read_gbs(ws);
         }
@@ -249,15 +253,21 @@ inline std::string to_ascii(const platform_topology& t,
             std::snprintf(buf, sizeof(buf), "%s    measured%s:\n", pipe,
                           m.pinned ? " (pinned)" : " (NOT pinned)");
             s += buf;
-            struct { const char* n; double lat; double bw; } rows[] = {
-                {"L1d", m.l1d_latency_ns, m.l1d_read_gbs},
-                {"L2", m.l2_latency_ns, m.l2_read_gbs},
-                {m.far_level.c_str(), m.far_latency_ns, m.far_read_gbs},
+            // The working set is part of the label, not a footnote. Without it
+            // two rows can carry the same level name with different numbers --
+            // which happens whenever the far probe lands in a level already
+            // measured, as it does on a part with no L3 -- and reads as a
+            // contradiction rather than as two different working sets.
+            struct { const char* n; std::size_t ws; double lat; double bw; } rows[] = {
+                {"L1d", m.l1d_bytes, m.l1d_latency_ns, m.l1d_read_gbs},
+                {"L2", m.l2_bytes, m.l2_latency_ns, m.l2_read_gbs},
+                {m.far_level.c_str(), m.far_bytes, m.far_latency_ns, m.far_read_gbs},
             };
             for (const auto& r : rows) {
                 if (r.lat <= 0.0 && r.bw <= 0.0) continue;
-                std::snprintf(buf, sizeof(buf), "%s      %-5s %8.2f ns  %8.2f GB/s\n",
-                              pipe, r.n, r.lat, r.bw);
+                std::snprintf(buf, sizeof(buf),
+                              "%s      %-4s @ %-9s %8.2f ns  %8.2f GB/s\n", pipe, r.n,
+                              detail::bytes_human(r.ws).c_str(), r.lat, r.bw);
                 s += buf;
             }
             if (!m.pinned && !m.note.empty()) {
@@ -402,17 +412,17 @@ inline std::string to_html(const platform_topology& t, const provenance& prov,
             h += "<div class=\"meas\"><b>measured";
             h += m.pinned ? "" : " (not pinned)";
             h += "</b><table>\n";
-            struct { const char* n; double lat; double bw; } mrows[] = {
-                {"L1d", m.l1d_latency_ns, m.l1d_read_gbs},
-                {"L2", m.l2_latency_ns, m.l2_read_gbs},
-                {m.far_level.c_str(), m.far_latency_ns, m.far_read_gbs},
+            struct { const char* n; std::size_t ws; double lat; double bw; } mrows[] = {
+                {"L1d", m.l1d_bytes, m.l1d_latency_ns, m.l1d_read_gbs},
+                {"L2", m.l2_bytes, m.l2_latency_ns, m.l2_read_gbs},
+                {m.far_level.c_str(), m.far_bytes, m.far_latency_ns, m.far_read_gbs},
             };
             char nb[96];
             for (const auto& r : mrows) {
                 if (r.lat <= 0.0 && r.bw <= 0.0) continue;
                 std::snprintf(nb, sizeof(nb), "%.2f ns &middot; %.2f GB/s", r.lat, r.bw);
-                h += "<tr><td class=\"k\">" + std::string(r.n) + "</td><td>" + nb +
-                     "</td></tr>\n";
+                h += "<tr><td class=\"k\">" + std::string(r.n) + " @ " +
+                     html_escape(detail::bytes_human(r.ws)) + "</td><td>" + nb + "</td></tr>\n";
             }
             h += "</table>";
             if (!m.pinned && !m.note.empty()) {
