@@ -9,6 +9,8 @@
 // stages consume. Both are interfaces once anything depends on them.
 
 #include <ppe/cli.hpp>
+#include <ppe/detect/clock.hpp>
+#include <ppe/detect/isa.hpp>
 #include <ppe/platform.hpp>
 #include <ppe/provenance.hpp>
 #include <ppe/version.hpp>
@@ -97,6 +99,29 @@ void print_text(const ppe::provenance& p) {
     print_cache("L2", a.l2_bytes, a.l2_sharing_cores);
     print_cache("L3", a.l3_bytes, a.l3_sharing_cores);
     print_bytes("cache line", a.cache_line_bytes);
+
+    // Machine ISA is what the silicon offers; build ISA is the ceiling for this
+    // binary. Reporting only one is how a result becomes unattributable -- 25%
+    // of "peak" means something different when the binary was built for a
+    // baseline ISA than when it was built for the machine's widest.
+    const ppe::isa_capabilities isa = ppe::detect_isa();
+    std::printf("\nSIMD:\n");
+    std::printf("  %-22s %s", "machine ISA", isa.name.c_str());
+    if (isa.vector_bits > 0) std::printf(" (%u-bit vectors)", isa.vector_bits);
+    std::printf("\n");
+    std::printf("  %-22s %s\n", "build ISA", ppe::build_isa());
+    if (isa.sve) {
+        std::printf("  %-22s %s\n", "",
+                    "SVE present; width is implementation defined and not reported");
+    }
+
+    const ppe::clock_claim clk = ppe::detect_clock();
+    if (clk.ghz > 0.0) {
+        std::printf("  %-22s %.3f GHz (%s, %s -- a claim, not a measurement)\n", "clock",
+                    clk.ghz, clk.source.c_str(), clk.is_max ? "maximum" : "nominal");
+    } else {
+        std::printf("  %-22s not detected (pass --ghz to consumers)\n", "clock");
+    }
 
     std::printf(
         "\nDetection is affinity-aware: it describes the cores this process may run\n"
