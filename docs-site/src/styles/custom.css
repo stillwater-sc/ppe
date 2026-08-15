@@ -1,0 +1,13 @@
+/* Custom styles for PPE docs */
+
+:root {
+  --sl-color-accent-low: #10241c;
+  --sl-color-accent: #2fa37a;
+  --sl-color-accent-high: #a8e6cf;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #a8e6cf;
+  --sl-color-accent: #1f7a58;
+  --sl-color-accent-high: #10241c;
+}

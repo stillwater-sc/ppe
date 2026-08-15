@@ -1,0 +1,66 @@
+import { defineConfig } from 'astro/config';
+import starlight from '@astrojs/starlight';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
+
+export default defineConfig({
+  site: 'https://stillwater-sc.github.io',
+  base: '/ppe',
+  markdown: {
+    remarkPlugins: [remarkMath],
+    rehypePlugins: [rehypeKatex],
+  },
+  integrations: [
+    starlight({
+      title: 'PPE -- Platform Performance Engineering',
+      description:
+        'Tools and studies for CPU, KPU, and GPU platform performance engineering',
+      social: [
+        {
+          icon: 'github',
+          label: 'GitHub',
+          href: 'https://github.com/stillwater-sc/ppe',
+        },
+      ],
+      editLink: {
+        baseUrl: 'https://github.com/stillwater-sc/ppe/edit/main/docs/',
+      },
+      customCss: [
+        'katex/dist/katex.min.css',
+        './src/styles/custom.css',
+      ],
+      sidebar: [
+        {
+          label: 'Getting Started',
+          autogenerate: { directory: 'getting-started' },
+        },
+        {
+          label: 'Architecture',
+          autogenerate: { directory: 'architecture' },
+        },
+        {
+          label: 'Studies',
+          autogenerate: { directory: 'studies' },
+        },
+        {
+          label: 'Visualization',
+          autogenerate: { directory: 'visualization' },
+        },
+        {
+          label: 'Changelog',
+          link: '/changelog/',
+        },
+        {
+          // Doxygen C++ API reference, generated into public/api/ by
+          // `npm run api` and served at <base>api/ (i.e. /ppe/api/ on Pages,
+          // /api/ in local dev). Starlight prepends the site `base` to internal
+          // links, so this stays base-relative. Opens in a new tab since it is a
+          // separate, fully self-contained doc tree.
+          label: 'C++ API Reference (Doxygen)',
+          link: '/api/',
+          attrs: { target: '_blank', rel: 'noopener noreferrer' },
+        },
+      ],
+    }),
+  ],
+});

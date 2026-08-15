@@ -1,0 +1,77 @@
+---
+title: PPE — Platform Performance Engineering
+description: Tools and studies for measuring what CPU, KPU, and GPU platforms actually deliver.
+template: splash
+hero:
+  tagline: >
+    Detect what a machine is, model it, measure against the model, trace what
+    ran, and show the result. Tools and studies for CPU, KPU, and GPU platforms.
+  actions:
+    - text: Get Started
+      link: /ppe/getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/stillwater-sc/ppe
+      icon: external
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+
+<CardGrid stagger>
+  <Card title="Attribute detection" icon="magnifier">
+    Cache hierarchy, topology, NUMA, ISA, accelerator geometry — the machine
+    model everything else is measured against.
+  </Card>
+  <Card title="Blocking studies" icon="seti:cpp">
+    How tiling parameters interact with a real memory hierarchy, rather than
+    with the one the textbook assumed.
+  </Card>
+  <Card title="Schedules & occupancy" icon="rocket">
+    Animations of execution schedules and resource occupation over time — where
+    the fabric idles, and why.
+  </Card>
+  <Card title="Traces & profilers" icon="list-format">
+    The event streams the studies and visualizations consume.
+  </Card>
+</CardGrid>
+
+## The pipeline
+
+The four workstreams are one pipeline, not four projects:
+
+**detect the platform → model it → measure against the model → trace execution → visualize the result**
+
+The attribute schema is the contract that joins them. A bandwidth number without
+the working-set size and the last-level cache it was measured against is not a
+result; a schedule animation without the fabric geometry is a cartoon. Changes
+to the schema ripple through every downstream stage, so it is the part of the
+repository worth designing carefully.
+
+<CardGrid>
+  <LinkCard
+    title="Getting started"
+    href="/ppe/getting-started/"
+    description="Build the tools, run the placeholders, understand the layout."
+  />
+  <LinkCard
+    title="Build options"
+    href="/ppe/getting-started/build-options/"
+    description="CMake presets, options, and when host-tuned builds are the point."
+  />
+  <LinkCard
+    title="Architecture"
+    href="/ppe/architecture/"
+    description="Attribute detection, the platform model, and the per-platform backends behind it."
+  />
+  <LinkCard
+    title="Studies"
+    href="/ppe/studies/"
+    description="Linear algebra blocking studies and the discipline a believable measurement needs."
+  />
+  <LinkCard
+    title="Visualization"
+    href="/ppe/visualization/"
+    description="Schedule and occupancy animations, and the trace format behind them."
+  />
+</CardGrid>

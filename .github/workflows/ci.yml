@@ -1,0 +1,252 @@
+name: CI
+
+on:
+  push:
+    branches: [ '**' ]
+    tags: [ 'v[0-9]*' ]
+  pull_request:
+    branches: [ main ]
+    # The four defaults must be listed explicitly once `types` is named at all:
+    # naming it REPLACES the default set rather than extending it.
+    types: [ opened, synchronize, reopened, ready_for_review ]
+
+jobs:
+  # -- ASCII guard: source files must contain only ASCII bytes ---------
+  # Fails fast if any C++ source under include/, applications/, benchmarks/ or
+  # tools/ introduces non-ASCII (multibyte) characters.
+  ascii-check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check for non-ASCII characters in source
+        run: |
+          # grep -l exits 0 (matches), 1 (no matches), >1 (execution error).
+          # Don't mask >1 with '|| true' -- a broken scan must fail CI, not pass.
+          set +e
+          hits=$(grep -rlP '[^\x00-\x7F]' \
+            --include='*.hpp' --include='*.cpp' --include='*.h' \
+            --include='*.cc' --include='*.cxx' \
+            include applications benchmarks tools)
+          status=$?
+          set -e
+          if [ "$status" -gt 1 ]; then
+            echo "ASCII scan failed to execute (grep exit $status)."
+            exit "$status"
+          fi
+          if [ -n "$hits" ]; then
+            echo "Non-ASCII characters found in:"
+            echo "$hits"
+            echo "Source files must be ASCII-only."
+            exit 1
+          fi
+          echo "OK: all source files are ASCII-only."
+
+  # -- Cross-platform build + smoke tests ------------------------------
+  # Applications, benchmarks and tools all build by default, so this one matrix
+  # compiles every target in the repository. CTest runs the --help smoke tests;
+  # it never runs a timed measurement (see the note on the `presets` job).
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # -- Linux x86_64 --------------------------------------------
+          - os: ubuntu-24.04
+            compiler: gcc
+            cc: gcc-13
+            cxx: g++-13
+            name: Linux x64 (GCC 13)
+
+          - os: ubuntu-24.04
+            compiler: clang
+            cc: clang-18
+            cxx: clang++-18
+            name: Linux x64 (Clang 18)
+
+          # -- Linux ARM64 ---------------------------------------------
+          # Not a portability box-tick: PPE detects cache and topology
+          # attributes, and those backends diverge hardest between x86 and
+          # AArch64. A study that only ever compiled on x86 would be a study
+          # about x86.
+          - os: ubuntu-24.04-arm
+            compiler: gcc
+            cc: gcc-13
+            cxx: g++-13
+            name: Linux ARM64 (GCC 13)
+
+          - os: ubuntu-24.04-arm
+            compiler: clang
+            cc: clang-18
+            cxx: clang++-18
+            name: Linux ARM64 (Clang 18)
+
+          # -- macOS ARM64 (Apple Silicon) -----------------------------
+          - os: macos-14
+            compiler: apple-clang
+            cc: clang
+            cxx: clang++
+            name: macOS ARM64 (Apple Clang)
+
+          - os: macos-15
+            compiler: apple-clang
+            cc: clang
+            cxx: clang++
+            name: macOS ARM64 (Apple Clang, latest)
+
+          # -- Windows x86_64 ------------------------------------------
+          - os: windows-2022
+            compiler: msvc
+            name: Windows x64 (MSVC 2022)
+
+          - os: windows-2022
+            compiler: clang-cl
+            name: Windows x64 (Clang-CL)
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+
+    # Use sccache (and its GitHub Actions cache) only on trusted runs: pushes
+    # and same-repo PRs. Forked PRs leave it empty so they never write to the
+    # shared GHA cache (zizmor cache-poisoning). An empty launcher == no launcher.
+    env:
+      SCCACHE_LAUNCHER: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && 'sccache' || '' }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up sccache
+        if: >-
+          github.event_name != 'pull_request' ||
+          github.event.pull_request.head.repo.full_name == github.repository
+        uses: mozilla-actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+
+      # Plain `cmake -B build` rather than a preset: the presets pin a generator
+      # (Ninja / Visual Studio), and this matrix deliberately exercises each
+      # platform's default toolchain. The `presets` job below covers the preset
+      # flow itself.
+      - name: Configure (Unix, GCC/Clang)
+        if: runner.os != 'Windows'
+        run: >
+          cmake -B build
+          -DCMAKE_CXX_STANDARD=20
+          -DCMAKE_C_COMPILER=${{ matrix.cc }}
+          -DCMAKE_CXX_COMPILER=${{ matrix.cxx }}
+          -DCMAKE_C_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
+          -DCMAKE_BUILD_TYPE=Release
+
+      - name: Configure (Windows, MSVC)
+        if: matrix.compiler == 'msvc'
+        run: >
+          cmake -B build
+          -G "Visual Studio 17 2022" -A x64
+          -DCMAKE_CXX_STANDARD=20
+          -DCMAKE_C_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
+
+      - name: Configure (Windows, Clang-CL)
+        if: matrix.compiler == 'clang-cl'
+        run: >
+          cmake -B build
+          -G "Visual Studio 17 2022" -A x64
+          -T ClangCL
+          -DCMAKE_CXX_STANDARD=20
+          -DCMAKE_C_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
+          -DCMAKE_CXX_COMPILER_LAUNCHER=${{ env.SCCACHE_LAUNCHER }}
+
+      - name: Build (Unix)
+        if: runner.os != 'Windows'
+        run: cmake --build build --parallel 2
+
+      - name: Build (Windows)
+        if: runner.os == 'Windows'
+        run: cmake --build build --config Release --parallel
+
+      - name: Test (Unix)
+        if: runner.os != 'Windows'
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        run: ctest --test-dir build -C Release --output-on-failure
+
+  # -- CMakePresets.json validation ------------------------------------
+  # The matrix above never touches the presets, so a typo in CMakePresets.json
+  # -- a misspelled cache variable, a preset whose binaryDir collides, a
+  # buildPreset naming a configurePreset that does not exist -- would ship
+  # green. This lane runs the full configure/build/test preset flow, which is
+  # what a contributor actually types.
+  #
+  # It also runs the placeholder executables for real (not just --help), because
+  # they are cheap and a crash on startup is worth catching. This is NOT a
+  # performance gate: shared runners cannot provide pinned cores or a quiet
+  # machine, so no number produced here is recorded or compared.
+  presets:
+    name: Linux x64 CMake presets
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Ninja
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ninja-build
+
+      - name: Configure (preset ci)
+        run: cmake --preset ci
+
+      - name: Build (preset ci)
+        run: cmake --build --preset ci
+
+      - name: Test (preset ci)
+        run: ctest --preset ci
+
+      # Small sizes: this checks that they run and exit 0, not how fast they are.
+      - name: Run the placeholders
+        run: |
+          ./build-ci/tools/tool_topology
+          ./build-ci/tools/tool_topology --json
+          ./build-ci/benchmarks/bench_triad --mib 8 --iters 2
+          ./build-ci/applications/app_blocking_study --size 128
+
+  # -- Sanitizer lane --------------------------------------------------
+  # PPE is low-level systems code: the detection backends will read raw
+  # structures from sysfs, CPUID leaves and vendor runtimes, and the measurement
+  # harnesses hand out large buffers. Those are exactly the bugs a Release-only
+  # matrix hides. Runs the smoke tests plus the placeholders under ASan+UBSan.
+  sanitizers:
+    name: Linux x64 ASan + UBSan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Configure (ASan + UBSan)
+        run: >
+          cmake -B build-asan
+          -DCMAKE_CXX_STANDARD=20
+          -DCMAKE_C_COMPILER=clang-18
+          -DCMAKE_CXX_COMPILER=clang++-18
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DPPE_SANITIZE=address,undefined
+
+      - name: Build
+        run: cmake --build build-asan --parallel 2
+
+      - name: Test
+        run: ctest --test-dir build-asan --output-on-failure
+        env:
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+
+      - name: Run the placeholders under sanitizers
+        run: |
+          ./build-asan/tools/tool_topology --json
+          ./build-asan/benchmarks/bench_triad --mib 8 --iters 2
+          ./build-asan/applications/app_blocking_study --size 128
+        env:
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1

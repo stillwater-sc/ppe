@@ -1,0 +1,26 @@
+version: 2
+updates:
+  # Keep GitHub Actions pinned to commit SHAs up to date. Dependabot bumps the
+  # SHA and the trailing "# vX.Y.Z" comment together when a new release ships.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
+    labels:
+      - dependencies
+
+  # The docs site is a real npm dependency tree (Astro, Starlight, sharp) and
+  # docs.yml runs `npm ci` against its lockfile. Left unattended it goes stale
+  # and starts failing on transitive advisories.
+  - package-ecosystem: npm
+    directory: /docs-site
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: chore
+      include: scope
+    labels:
+      - dependencies

@@ -1,0 +1,102 @@
+################################################################################################
+# summary.cmake
+#
+# PPE configuration summary functions.
+# Ported from MTL5's summary.cmake (itself from Universal), adapted for PPE.
+
+################################################################################################
+# Status report helper -- automatically aligns right column and selects text based on condition.
+function(ppe_status text)
+    set(status_cond)
+    set(status_then)
+    set(status_else)
+
+    set(status_current_name "cond")
+    foreach(arg ${ARGN})
+        if(arg STREQUAL "THEN")
+            set(status_current_name "then")
+        elseif(arg STREQUAL "ELSE")
+            set(status_current_name "else")
+        else()
+            list(APPEND status_${status_current_name} ${arg})
+        endif()
+    endforeach()
+
+    if(DEFINED status_cond)
+        set(status_placeholder_length 38)
+        string(RANDOM LENGTH ${status_placeholder_length} ALPHABET " " status_placeholder)
+        string(LENGTH "${text}" status_text_length)
+        if(status_text_length LESS status_placeholder_length)
+            string(SUBSTRING "${text}${status_placeholder}" 0 ${status_placeholder_length} status_text)
+        elseif(DEFINED status_then OR DEFINED status_else)
+            message(STATUS "${text}")
+            set(status_text "${status_placeholder}")
+        else()
+            set(status_text "${text}")
+        endif()
+
+        if(DEFINED status_then OR DEFINED status_else)
+            if(${status_cond})
+                string(REPLACE ";" " " status_then "${status_then}")
+                string(REGEX REPLACE "^[ \t]+" "" status_then "${status_then}")
+                message(STATUS "${status_text} ${status_then}")
+            else()
+                string(REPLACE ";" " " status_else "${status_else}")
+                string(REGEX REPLACE "^[ \t]+" "" status_else "${status_else}")
+                message(STATUS "${status_text} ${status_else}")
+            endif()
+        else()
+            string(REPLACE ";" " " status_cond "${status_cond}")
+            string(REGEX REPLACE "^[ \t]+" "" status_cond "${status_cond}")
+            message(STATUS "${status_text} ${status_cond}")
+        endif()
+    else()
+        message(STATUS "${text}")
+    endif()
+endfunction()
+
+################################################################################################
+# Function merging lists of compiler flags to single string.
+function(ppe_merge_flag_lists out_var)
+    set(__result "")
+    foreach(__list ${ARGN})
+        foreach(__flag ${${__list}})
+            string(STRIP ${__flag} __flag)
+            set(__result "${__result} ${__flag}")
+        endforeach()
+    endforeach()
+    string(STRIP ${__result} __result)
+    set(${out_var} ${__result} PARENT_SCOPE)
+endfunction()
+
+####
+# Prints PPE configuration summary
+function(ppe_print_configuration_summary)
+
+    ppe_merge_flag_lists(__cxx_flags_rel CMAKE_CXX_FLAGS_RELEASE CMAKE_CXX_FLAGS)
+    ppe_merge_flag_lists(__cxx_flags_deb CMAKE_CXX_FLAGS_DEBUG CMAKE_CXX_FLAGS)
+
+    ppe_status("")
+    ppe_status("******************* PPE Configuration Summary *******************")
+    ppe_status("General:")
+    ppe_status("  Version                          :   ${PROJECT_VERSION}")
+    ppe_status("  System                           :   ${CMAKE_SYSTEM_NAME}")
+    ppe_status("  Processor                        :   ${CMAKE_SYSTEM_PROCESSOR}")
+    ppe_status("  C++ standard                     :   C++${CMAKE_CXX_STANDARD}")
+    ppe_status("  C++ compiler                     :   ${CMAKE_CXX_COMPILER}")
+    ppe_status("  Release CXX flags                :   ${__cxx_flags_rel}")
+    ppe_status("  Debug CXX flags                  :   ${__cxx_flags_deb}")
+    ppe_status("  Build type                       :   ${CMAKE_BUILD_TYPE}")
+    ppe_status("")
+    ppe_status("Build options:")
+    ppe_status("  PPE_BUILD_APPLICATIONS           :   ${PPE_BUILD_APPLICATIONS}")
+    ppe_status("  PPE_BUILD_BENCHMARKS             :   ${PPE_BUILD_BENCHMARKS}")
+    ppe_status("  PPE_BUILD_TOOLS                  :   ${PPE_BUILD_TOOLS}")
+    ppe_status("  PPE_BUILD_TESTS                  :   ${PPE_BUILD_TESTS}")
+    ppe_status("  PPE_NATIVE_ARCH                  :   ${PPE_NATIVE_ARCH}")
+    ppe_status("  PPE_CMAKE_TRACE                  :   ${PPE_CMAKE_TRACE}")
+    ppe_status("")
+    ppe_status("Install:")
+    ppe_status("  Install path                     :   ${CMAKE_INSTALL_PREFIX}")
+    ppe_status("")
+endfunction()

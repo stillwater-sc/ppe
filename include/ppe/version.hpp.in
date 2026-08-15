@@ -1,0 +1,16 @@
+// version.hpp -- generated from version.hpp.in by CMake. Do not edit.
+#pragma once
+
+#define PPE_VERSION_MAJOR @PROJECT_VERSION_MAJOR@
+#define PPE_VERSION_MINOR @PROJECT_VERSION_MINOR@
+#define PPE_VERSION_PATCH @PROJECT_VERSION_PATCH@
+#define PPE_VERSION_STRING "@PROJECT_VERSION@"
+
+namespace ppe {
+
+inline constexpr int version_major = PPE_VERSION_MAJOR;
+inline constexpr int version_minor = PPE_VERSION_MINOR;
+inline constexpr int version_patch = PPE_VERSION_PATCH;
+inline constexpr const char* version_string = PPE_VERSION_STRING;
+
+}  // namespace ppe
