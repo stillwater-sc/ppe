@@ -96,6 +96,68 @@ produced a smooth, plausible, monotonically improving scaling curve. It was
 caught by pinning the process to one core and asking whether the answer was
 physically possible.
 
+## `layer_bandwidth` — bandwidth per layer, as named numbers
+
+`memory_hierarchy` produces the bandwidth *curve*; this places a working set
+deliberately inside each detected level (50% of capacity) and reports read,
+write and copy for it. Only possible since detection returns real capacities.
+
+On the i7-12700K, release build, pinned, single thread:
+
+| layer | read GB/s | B/cycle |
+|---|---|---|
+| L1d | 161.81 | 33.02 |
+| L2 | 99.06 | 20.22 |
+| L3 | 71.48 | 14.59 |
+| DRAM | 27.71 | 5.65 |
+| storage | 0.22 | — |
+
+DRAM agrees with `memory_hierarchy` and `roofline`; storage agrees with
+`storage_hierarchy` and with `dd`.
+
+### The kernel has to be vectorizable, or there is no hierarchy to see
+
+The first version used four independent scalar accumulators — the standard fix
+for serializing a reduction on the adder's latency. It reported **L1d read and
+L2 read as both 16 B/cycle**, and that is not a hierarchy: it is a load-issue
+limit measured twice.
+
+Floating-point addition is not associative, so a compiler may not combine
+independent scalar chains into a vector without `-ffast-math`. Four scalar
+chains stay scalar, and the loop retires two 8-byte loads per cycle whatever the
+ISA offers. Rebuilding with `-march=native` changed nothing, which is what ruled
+out the ISA as the cause.
+
+Accumulating into `s[j]` where `j` is the lane index preserves each lane's
+summation order, so vectorizing needs no reassociation and the compiler is free
+to do it. On the identical buffer: **16 B/cycle scalar against 32 B/cycle
+lane-wise**, and L1d separates from L2 as it should.
+
+### Other hazards it accounts for
+
+**Working-set placement.** A set equal to capacity does not sit in that level —
+conflict misses and the previous level's tail intrude. 50% is comfortably
+resident.
+
+**Samples long enough to be measurements.** A single pass over a 24 KiB buffer
+takes a few hundred nanoseconds, at the clock's resolution limit. Each timed
+sample repeats the kernel until it has moved 64 MiB.
+
+**Private vs shared.** For a shared level the aggregate columns divide the
+working set between threads, or the threads collectively overflow the level they
+are measuring.
+
+**Write-allocate.** Write and copy count the bytes the program moved (STREAM
+convention). On a write-allocate machine without non-temporal stores the memory
+system moves about twice that for the DRAM rows.
+
+**The copy row can exceed the compiled loop.** glibc's `memcpy` dispatches on
+the runtime CPU, so a copy loop lowered to `memcpy` may use wider instructions
+than the build ISA allows. The L1d copy figure (77.9 B/cycle) is that effect.
+
+Rows whose spread exceeds 20% are marked `UNRESOLVED` rather than reported as
+findings.
+
 ## `storage_hierarchy` — the same curve, one level down
 
 Block size and queue depth against bandwidth and latency, on a file. The knees
