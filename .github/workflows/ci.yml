@@ -182,22 +182,29 @@ jobs:
       # Win32 buffer protocol, or a walk that never terminates would all have
       # passed CI. Each platform now executes its own backend.
       #
-      # The output is printed rather than asserted on: "not detected" is a
-      # legitimate answer in a container or a restricted VM, and a hard
-      # assertion on cache sizes would make this lane flake on infrastructure
-      # changes rather than on defects. What it catches is a crash, a hang, or a
-      # non-zero exit -- which is what an unverified OS-API path actually risks.
-      - name: Run detection (Unix)
+      # The sweep runs here too, and for a related reason: it takes its
+      # pointer-chase slot spacing from the detected cache line, and the only
+      # runners with a line size other than 64 bytes are the macOS ones (Apple
+      # silicon uses 128). Running it only in the Linux lanes would leave the
+      # case that motivated detecting the line size at all -- an M-series machine
+      # chasing at 128 -- verified by reasoning rather than by execution.
+      #
+      # Small and --no-threads to keep it to a couple of seconds. Output is
+      # printed, never asserted on: no number from a shared runner is recorded or
+      # compared. What this catches is a crash, a hang, or a non-zero exit.
+      - name: Run detection and sweep (Unix)
         if: runner.os != 'Windows'
         run: |
           ./build/tools/tool_topology
           ./build/tools/tool_topology --json
+          ./build/applications/app_memory_hierarchy --min-kib 4 --max-mib 2 --no-threads
 
-      - name: Run detection (Windows)
+      - name: Run detection and sweep (Windows)
         if: runner.os == 'Windows'
         run: |
           .\build\tools\Release\tool_topology.exe
           .\build\tools\Release\tool_topology.exe --json
+          .\build\applications\Release\app_memory_hierarchy.exe --min-kib 4 --max-mib 2 --no-threads
 
   # -- CMakePresets.json validation ------------------------------------
   # The matrix above never touches the presets, so a typo in CMakePresets.json
