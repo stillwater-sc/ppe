@@ -54,11 +54,16 @@
 
 namespace {
 
-// Cache line size is assumed here rather than detected; phase 2 replaces this
-// with ppe::detect_cpu().cache_line_bytes. 64 is right for every x86-64 part
-// and for Apple silicon's 128-byte lines it merely means the chase touches
-// every other line, which costs resolution rather than correctness.
-constexpr std::size_t kAssumedLineBytes = 64;
+// Fallback line size, used only when detection reports nothing. 64 is right for
+// every x86-64 part; it is WRONG for Apple silicon, which uses 128.
+//
+// Getting this wrong does not merely cost resolution. The chase spaces its slots
+// one line apart so that every hop is a separate line and therefore a separate
+// miss. Space them by 64 on a 128-byte-line machine and consecutive slots share
+// a line, so half the hops hit in the line just fetched -- the reported latency
+// is then a blend of a miss and a hit, biased low, and the knee it puts a level
+// boundary at moves. The sweep would still produce a smooth plausible curve.
+constexpr std::size_t kFallbackLineBytes = 64;
 
 constexpr std::size_t kMiB = 1024u * 1024u;
 
@@ -82,6 +87,7 @@ void print_help() {
         "      --max-mib N    largest working set, in MiB (default 64)\n"
         "      --min-kib N    smallest working set, in KiB (default 4)\n"
         "      --threads N    max threads for the scaling sweep (default: hardware)\n"
+        "      --line-bytes N override the cache line size (default: detected)\n"
         "      --csv PATH     write results as CSV, with provenance comments\n"
         "      --json         emit the provenance record as JSON and exit\n"
         "      --no-threads   skip the thread scaling sweep\n"
@@ -117,10 +123,15 @@ std::vector<std::size_t> build_cycle(std::size_t slots, std::uint64_t seed) {
 }
 
 /// Nanoseconds per dependent access over a working set of `bytes`.
-double measure_latency_ns(std::size_t bytes, std::uint64_t seed) {
-    const std::size_t stride = kAssumedLineBytes / sizeof(std::size_t);
-    const std::size_t slots = bytes / kAssumedLineBytes;
-    if (slots < 2) return 0.0;
+///
+/// `line_bytes` must be the machine's real cache line: it is the slot spacing,
+/// and it is what guarantees each hop lands on a line the previous hop did not
+/// fetch.
+double measure_latency_ns(std::size_t bytes, std::size_t line_bytes,
+                          std::uint64_t seed) {
+    const std::size_t stride = line_bytes / sizeof(std::size_t);
+    const std::size_t slots = bytes / line_bytes;
+    if (slots < 2 || stride == 0) return 0.0;
 
     // Each slot holds the element index of the next slot in the cycle, so the
     // chase is `idx = buf[idx]` -- the load's result IS the next address.
@@ -464,17 +475,49 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+    // Slot spacing for the chase. Detected by preference: getting it wrong
+    // biases the latency low rather than merely blurring it (see
+    // kFallbackLineBytes), and on Apple silicon the wrong value is the one that
+    // used to be hardcoded here.
+    const int line_override = parse_int(argc, argv, "--line-bytes", 0);
+    std::size_t line_bytes = kFallbackLineBytes;
+    const char* line_source = "fallback";
+    if (line_override > 0) {
+        line_bytes = static_cast<std::size_t>(line_override);
+        line_source = "user";
+    } else if (prov.cpu.cache_line_bytes > 0) {
+        line_bytes = prov.cpu.cache_line_bytes;
+        line_source = prov.cpu.source.empty() ? "detected" : prov.cpu.source.c_str();
+    }
+
+    // A line size that is not a multiple of the pointer width cannot be a slot
+    // stride. Nothing real reports one; refuse rather than silently truncate.
+    if (line_bytes < sizeof(std::size_t) || line_bytes % sizeof(std::size_t) != 0) {
+        std::fprintf(stderr,
+                     "error: line size %zu is not a usable multiple of %zu bytes\n",
+                     line_bytes, sizeof(std::size_t));
+        return 2;
+    }
+
     std::fputs(ppe::to_text(prov).c_str(), stdout);
-    std::printf("sweep   : %s to %s, assumed %zu-byte lines\n\n",
+    std::printf("sweep   : %s to %s, %zu-byte lines (%s)\n",
                 human_size(min_bytes).c_str(), human_size(max_bytes).c_str(),
-                kAssumedLineBytes);
+                line_bytes, line_source);
+    if (line_override <= 0 && prov.cpu.cache_line_bytes == 0) {
+        std::printf(
+            "          ^ detection reported no line size, so the chase is using the\n"
+            "            %zu-byte fallback. On a machine with longer lines this\n"
+            "            understates latency: consecutive slots would share a line.\n",
+            kFallbackLineBytes);
+    }
+    std::printf("\n");
 
     std::vector<row> rows;
     const std::vector<std::size_t> sizes = sweep_sizes(min_bytes, max_bytes);
 
     std::printf("%-14s %14s %14s\n", "working set", "latency (ns)", "bandwidth GB/s");
     for (const std::size_t s : sizes) {
-        const double lat = measure_latency_ns(s, 0xC0FFEE);
+        const double lat = measure_latency_ns(s, line_bytes, 0xC0FFEE);
         const double bw = measure_bandwidth_gbs(s);
 
         rows.push_back({"latency", s, 1, lat, "ns"});

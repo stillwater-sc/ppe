@@ -49,6 +49,31 @@ shared by every core, so it agrees either way. This is the tool answering "does
 this machine tell the truth about itself?" with a useful *no*, and naming the
 reason.
 
+### The cache line is the slot spacing, and it must be right
+
+The chase spaces its slots one cache line apart so every hop lands on a line the
+previous hop did not fetch. That spacing was hardcoded to 64 bytes until phase 2
+made the real value available; it is now taken from
+`detect_cpu().cache_line_bytes`, with `--line-bytes` to override and a 64-byte
+fallback that announces itself.
+
+This is not a cosmetic fix. Forcing the wrong value on the development machine,
+whose lines are 64 bytes, at an 8 MiB working set:
+
+| assumed line | reported latency |
+|---|---|
+| 64 (correct) | 15.02 ns |
+| 32 | 13.12 ns |
+| 16 | 12.70 ns |
+
+An undersized line makes consecutive slots share a line, so a fraction of the
+hops hit in the line just fetched and the reported latency is a blend of a miss
+and a hit — **biased low by 13% at half the true size**, and the knee it places a
+level boundary at moves with it. The curve stays smooth and plausible throughout.
+
+Apple silicon uses 128-byte lines, so the old hardcoded 64 was exactly this
+error on every M-series machine.
+
 ### Two lessons it taught
 
 **A dependent chase must walk a single cycle, not any permutation.** A random

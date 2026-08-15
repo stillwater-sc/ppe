@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `memory_hierarchy` took its pointer-chase slot spacing from a hardcoded
+  64-byte cache line; it now uses `detect_cpu().cache_line_bytes`, with
+  `--line-bytes` to override and a fallback that announces itself. An
+  undersized line makes consecutive slots share a line, biasing the reported
+  latency low (measured: 15.02 ns -> 13.12 ns at half the true size) and moving
+  the inferred level boundaries. Apple silicon's 128-byte lines made the old
+  constant wrong on every M-series machine.
+
 ### Added
 
 - **Phase 4, storage half** (#4): `applications/storage_hierarchy` sweeps block
