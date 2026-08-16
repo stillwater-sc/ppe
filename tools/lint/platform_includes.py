@@ -107,6 +107,64 @@ def mentions(text, symbol):
                      text) is not None
 
 
+PLATFORM_GUARD = re.compile(
+    r'#\s*(if|elif)\s+.*(defined\s*\(?\s*(__linux__|_WIN32|__APPLE__|PPE_HAS_X86_CPUID|__aarch64__)|'
+    r'__linux__|_WIN32|__APPLE__)')
+
+
+def guarded_symbols(text):
+    """Names defined only inside a platform-conditional region.
+
+    Tracks #if/#endif nesting and records `inline ... name(` and `struct name`
+    declared while inside a platform guard, minus anything also declared
+    outside one. A test that uses such a name compiles on one platform and
+    breaks the others -- which is how tests/kfd.cpp, written to verify a parser
+    for hardware nobody here owns, broke both Windows and both macOS jobs.
+    """
+    inside = []          # stack of bools: is this level a platform guard
+    guarded, unguarded = set(), set()
+    decl = re.compile(r'^\s*(?:inline\s+[\w:<>,\s*&]+?\b(\w+)\s*\(|struct\s+(\w+))')
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('#if'):
+            inside.append(bool(PLATFORM_GUARD.match(stripped)))
+        elif stripped.startswith('#elif'):
+            if inside:
+                inside[-1] = inside[-1] or bool(PLATFORM_GUARD.match(stripped))
+        elif stripped.startswith('#endif'):
+            if inside:
+                inside.pop()
+        else:
+            m = decl.match(line)
+            if m:
+                name = m.group(1) or m.group(2)
+                (guarded if any(inside) else unguarded).add(name)
+    return guarded - unguarded
+
+
+def check_test_portability(files):
+    """Tests must only use symbols available on every platform."""
+    guarded = {}
+    for path in files:
+        if path.suffix != ".hpp":
+            continue
+        text = strip_comments(path.read_text(encoding="utf-8", errors="replace"))
+        for name in guarded_symbols(text):
+            guarded[name] = path
+
+    failures = []
+    for path in files:
+        if "tests" not in path.parts:
+            continue
+        text = strip_comments(path.read_text(encoding="utf-8", errors="replace"))
+        for name, origin in sorted(guarded.items()):
+            if re.search(r'(?<![A-Za-z0-9_])' + re.escape(name) + r'\s*[\(<]', text):
+                failures.append(
+                    f"{path}: uses '{name}', which {origin} defines only inside a "
+                    f"platform guard")
+    return failures
+
+
 def main():
     roots = [Path("include"), Path("applications"), Path("tools"), Path("tests"),
              Path("benchmarks")]
@@ -127,6 +185,8 @@ def main():
             if header == "windows.h" and "winsock2.h" in have:
                 continue
             failures.append(f"{path}: uses '{symbol}' but does not include <{header}>")
+
+    failures += check_test_portability(files)
 
     if failures:
         print("Platform include check FAILED:")

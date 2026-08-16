@@ -121,6 +121,74 @@ inline const char* pci_vendor_name(std::uint16_t id) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// AMD KFD topology parsing
+// ---------------------------------------------------------------------------
+// Deliberately OUTSIDE the platform guard below. Parsing key/value text has no
+// platform dependency, and putting it behind #if __linux__ meant tests/kfd.cpp
+// -- the only verification this code has, since no machine in this project owns
+// an AMD GPU -- compiled on Linux alone and broke both Windows and both macOS
+// jobs. Portable logic belongs outside a platform guard; only the sysfs walk
+// that reads these files is Linux-specific.
+
+/// The fields of a KFD topology node this reader consumes.
+struct kfd_node {
+    unsigned long long simd_count = 0;
+    unsigned long long simd_per_cu = 0;
+    unsigned long long clk_khz = 0;        ///< max_engine_clk_fcompute
+    unsigned long long lds_kb = 0;
+    unsigned long long location_id = 0;
+    unsigned long long wave_front_size = 0;
+};
+
+/// Parse a KFD node `properties` file: whitespace-separated key/value lines.
+///
+/// Split out from the sysfs walk so it can be tested without an AMD GPU. The
+/// machine this is developed on has none and neither does any CI runner, so the
+/// alternative was shipping a parser nobody had ever run -- see tests/kfd.cpp.
+inline kfd_node parse_kfd_properties(std::istream& in) {
+    kfd_node k;
+    std::string key;
+    unsigned long long value = 0;
+    while (in >> key >> value) {
+        if (key == "simd_count") k.simd_count = value;
+        else if (key == "simd_per_cu") k.simd_per_cu = value;
+        else if (key == "max_engine_clk_fcompute") k.clk_khz = value;
+        else if (key == "lds_size_in_kb") k.lds_kb = value;
+        else if (key == "location_id") k.location_id = value;
+        else if (key == "wave_front_size") k.wave_front_size = value;
+    }
+    return k;
+}
+
+/// Fold a parsed KFD node into an accelerator record.
+inline void apply_kfd_node(const kfd_node& k, accelerator& a) {
+    accel_compute c;
+    c.kind = "CU";
+    // simd_count counts SIMDs, not compute units: a CU contains simd_per_cu of
+    // them (2 on RDNA, 4 on GCN). Reporting simd_count as a CU count would
+    // overstate the geometry by that factor.
+    c.count = k.simd_per_cu > 0 ? static_cast<unsigned>(k.simd_count / k.simd_per_cu)
+                                : static_cast<unsigned>(k.simd_count);
+    a.compute.push_back(c);
+
+    // max_engine_clk_fcompute is in kHz.
+    if (k.clk_khz > 0) a.clock_mhz = static_cast<double>(k.clk_khz) / 1000.0;
+
+    if (k.lds_kb > 0) {
+        accel_memory_level lvl;
+        lvl.name = "LDS/CU";
+        lvl.bytes = static_cast<std::size_t>(k.lds_kb) * 1024u;
+        lvl.instances = c.count;
+        a.memory.push_back(std::move(lvl));
+    }
+    a.source = "kfd";
+    a.note.clear();
+    if (k.wave_front_size > 0) {
+        a.capability = "wave" + std::to_string(k.wave_front_size);
+    }
+}
+
 #if defined(__linux__)
 
 inline std::string read_file_trimmed(const std::string& path) {
@@ -201,64 +269,6 @@ inline void fill_intel_gpu(int card, const std::string& device_dir, accelerator&
                       "by this driver (needs Level Zero)",
                       min_mhz, max_mhz);
         a.note = note;
-    }
-}
-
-/// The fields of a KFD topology node this reader consumes.
-struct kfd_node {
-    unsigned long long simd_count = 0;
-    unsigned long long simd_per_cu = 0;
-    unsigned long long clk_khz = 0;        ///< max_engine_clk_fcompute
-    unsigned long long lds_kb = 0;
-    unsigned long long location_id = 0;
-    unsigned long long wave_front_size = 0;
-};
-
-/// Parse a KFD node `properties` file: whitespace-separated key/value lines.
-///
-/// Split out from the sysfs walk so it can be tested without an AMD GPU. The
-/// machine this is developed on has none and neither does any CI runner, so the
-/// alternative was shipping a parser nobody had ever run -- see tests/kfd.cpp.
-inline kfd_node parse_kfd_properties(std::istream& in) {
-    kfd_node k;
-    std::string key;
-    unsigned long long value = 0;
-    while (in >> key >> value) {
-        if (key == "simd_count") k.simd_count = value;
-        else if (key == "simd_per_cu") k.simd_per_cu = value;
-        else if (key == "max_engine_clk_fcompute") k.clk_khz = value;
-        else if (key == "lds_size_in_kb") k.lds_kb = value;
-        else if (key == "location_id") k.location_id = value;
-        else if (key == "wave_front_size") k.wave_front_size = value;
-    }
-    return k;
-}
-
-/// Fold a parsed KFD node into an accelerator record.
-inline void apply_kfd_node(const kfd_node& k, accelerator& a) {
-    accel_compute c;
-    c.kind = "CU";
-    // simd_count counts SIMDs, not compute units: a CU contains simd_per_cu of
-    // them (2 on RDNA, 4 on GCN). Reporting simd_count as a CU count would
-    // overstate the geometry by that factor.
-    c.count = k.simd_per_cu > 0 ? static_cast<unsigned>(k.simd_count / k.simd_per_cu)
-                                : static_cast<unsigned>(k.simd_count);
-    a.compute.push_back(c);
-
-    // max_engine_clk_fcompute is in kHz.
-    if (k.clk_khz > 0) a.clock_mhz = static_cast<double>(k.clk_khz) / 1000.0;
-
-    if (k.lds_kb > 0) {
-        accel_memory_level lvl;
-        lvl.name = "LDS/CU";
-        lvl.bytes = static_cast<std::size_t>(k.lds_kb) * 1024u;
-        lvl.instances = c.count;
-        a.memory.push_back(std::move(lvl));
-    }
-    a.source = "kfd";
-    a.note.clear();
-    if (k.wave_front_size > 0) {
-        a.capability = "wave" + std::to_string(k.wave_front_size);
     }
 }
 
