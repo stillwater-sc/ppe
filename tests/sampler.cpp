@@ -22,6 +22,15 @@
 #  include <sched.h>
 #endif
 
+// noinline is spelled differently by MSVC. C++ has no portable attribute for it
+// -- [[gnu::noinline]] is as compiler-specific as the underscore form -- so the
+// spelling is selected here rather than assumed.
+#if defined(_MSC_VER)
+#  define PPE_TEST_NOINLINE __declspec(noinline)
+#else
+#  define PPE_TEST_NOINLINE __attribute__((noinline))
+#endif
+
 namespace {
 
 int failures = 0;
@@ -32,13 +41,13 @@ void expect_true(const char* what, bool ok) {
 }
 
 // noinline so they remain distinct symbols; the ratio is the assertion.
-__attribute__((noinline)) double busy_hot(double x, int n) {
+PPE_TEST_NOINLINE double busy_hot(double x, int n) {
     double s = 0;
     for (int i = 0; i < n * 4; ++i) s += std::sqrt(x + i);
     return s;
 }
 
-__attribute__((noinline)) double busy_cold(double x, int n) {
+PPE_TEST_NOINLINE double busy_cold(double x, int n) {
     double s = 0;
     for (int i = 0; i < n; ++i) s += std::sqrt(x + i);
     return s;

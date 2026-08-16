@@ -124,6 +124,37 @@ PLATFORM_HEADERS = {
 }
 
 
+def unguarded_compiler_extensions(text):
+    """GCC/Clang or MSVC extensions used outside a compiler guard.
+
+    __attribute__ is not C++; MSVC rejects it and spells the same intent
+    __declspec. tests/sampler.cpp used __attribute__((noinline)) unguarded and
+    broke MSVC while passing Clang-CL, which accepts both -- so even the other
+    Windows job did not catch it.
+    """
+    inside = []
+    bad = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('#if'):
+            inside.append(bool(PLATFORM_GUARD.match(stripped)))
+            continue
+        if stripped.startswith('#elif'):
+            if inside:
+                inside[-1] = inside[-1] or bool(PLATFORM_GUARD.match(stripped))
+            continue
+        if stripped.startswith('#endif'):
+            if inside:
+                inside.pop()
+            continue
+        if stripped.startswith('#define'):
+            continue          # defining the portable spelling is the fix, not the bug
+        for ext in ("__attribute__", "__declspec"):
+            if ext in stripped and not any(inside):
+                bad.append(ext)
+    return bad
+
+
 def unguarded_platform_includes(text):
     """Platform-specific headers included outside any platform guard.
 
@@ -232,6 +263,10 @@ def main():
             failures.append(
                 f"{path}: includes <{header}> outside a platform guard; it does not "
                 f"exist everywhere")
+        for ext in set(unguarded_compiler_extensions(strip_comments(raw))):
+            failures.append(
+                f"{path}: uses {ext} outside a compiler guard; it is not portable "
+                f"C++ (MSVC rejects __attribute__, GCC/Clang reject __declspec)")
 
     failures += check_test_portability(files)
 
