@@ -291,6 +291,14 @@ jobs:
           # empty profile.
           ./build-ci/applications/app_memory_hierarchy --min-kib 4 --max-mib 1 \
               --no-threads --profile
+          # Schedule/occupancy page: must be self-contained and well-formed SVG.
+          ./build-ci/applications/app_memory_hierarchy --min-kib 64 --max-mib 1 \
+              --threads 2 --schedule "$RUNNER_TEMP/schedule.html"
+          python3 -c "import os,re,sys,xml.etree.ElementTree as ET; \
+              d=open(os.environ['RUNNER_TEMP']+'/schedule.html').read(); \
+              assert not re.findall(r'src=|href=\"http|@import|url\\(', d), 'external refs'; \
+              [ET.fromstring(f) for f in re.findall(r'<svg.*?</svg>', d, re.S)]; \
+              print('schedule ok:', len(d), 'bytes, svg parses')"
           # HTML report must be self-contained: a report needing a network to
           # render is not a report you can keep.
           ./build-ci/tools/tool_topology --html "$RUNNER_TEMP/topo.html"

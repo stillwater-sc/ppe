@@ -51,6 +51,9 @@ const FILE_MAP = {
   // -- Visualization -----------------------------------------------
   'visualization/index.md':           'visualization/index.md',
 
+  // -- Systems -----------------------------------------------------
+  'systems/i7-12700k.md':             'systems/i7-12700k.md',
+
   // -- Tracing -----------------------------------------------------
   'tracing/index.md':                 'tracing/index.md',
 

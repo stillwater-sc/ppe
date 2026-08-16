@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Schedule and occupancy visualization
+  (`include/ppe/report/schedule_report.hpp`): a self-contained HTML page with a
+  per-lane span timeline and an occupancy curve, from
+  `memory_hierarchy --schedule PATH`. Lanes that registered a name but recorded
+  nothing are excluded from the occupancy denominator and reported separately.
+- `docs/systems/i7-12700k.md`: full characterization of the development
+  machine, every figure labelled measured or claimed.
+- `ppe::trace::recorder::snapshot()`, so a consumer can render captured spans
+  rather than only serialize them.
+
 - Sampling profiler (`include/ppe/probe/sampler.hpp`) on `perf_event`, with ELF
   `.symtab` symbolization (`elf_symbols.hpp`), ring-buffer wraparound handling,
   lost-sample reporting, and detection of thread migration across PMU domains.

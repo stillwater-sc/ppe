@@ -146,6 +146,35 @@ public:
         if (b != nullptr) b->name = std::move(name);
     }
 
+    /// One thread's captured events, for a consumer that wants to render them
+    /// rather than serialize them.
+    struct lane {
+        std::uint32_t tid = 0;
+        std::string name;
+        std::vector<event> events;
+        std::size_t dropped = 0;
+    };
+
+    /// Copy out what has been recorded.
+    ///
+    /// A copy rather than a view: the buffers keep filling while a report is
+    /// being built, and rendering from live storage would race the threads still
+    /// writing to it.
+    std::vector<lane> snapshot() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        std::vector<lane> out;
+        out.reserve(buffers_.size());
+        for (const auto& b : buffers_) {
+            lane l;
+            l.tid = b->tid;
+            l.name = b->name;
+            l.events = b->events;
+            l.dropped = b->dropped;
+            out.push_back(std::move(l));
+        }
+        return out;
+    }
+
     /// Total events retained and total dropped, across all threads.
     struct stats {
         std::size_t recorded = 0;

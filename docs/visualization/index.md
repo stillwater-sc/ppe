@@ -1,8 +1,9 @@
 # Visualization
 
-> **Status: not started.** Nothing in the tree implements this yet. This page
-> records the intent so the trace format is designed with its consumer in mind
-> rather than retrofitted to it.
+> **Status: first view shipped.** `memory_hierarchy --schedule PATH` renders a
+> schedule and an occupancy curve as a self-contained HTML page
+> (`include/ppe/report/schedule_report.hpp`). Animation over a domain-flow fabric
+> is still ahead; what exists draws real recorded spans.
 
 ## What gets visualized
 
@@ -40,6 +41,37 @@ the thing being measured should not know how it is being displayed.
 Every trace carries its platform attributes. An occupancy plot with unlabeled
 axes, or a schedule animation whose fabric geometry is implicit, is a picture
 rather than a measurement.
+
+## What exists now
+
+Two views of the same spans, because they answer different questions.
+
+**Schedule** — one row per thread, one bar per span, colour by span name. This is
+what a trace viewer shows, and it answers *what happened*.
+
+**Occupancy** — the fraction of instrumented lanes inside a span at each instant.
+Perfetto has no notion of this, and it answers *what did the machine have left*.
+**The idle is the point**: a dense-looking schedule can still leave most of the
+machine unused.
+
+On a threaded bandwidth sweep, peak occupancy reaches 56% — nine of sixteen lanes
+busy during the eight-thread phase — against a mean of 8%, because most of the
+timeline is the single-threaded sweep.
+
+### The denominator is the whole argument
+
+The first run of this reported **6% peak occupancy**. Arithmetically correct and
+entirely misleading: fifteen worker threads had registered a thread name and
+never opened a span, so they counted as idle lanes forever. Two changes followed
+— lanes that recorded nothing are excluded from the denominator and reported
+separately as *uninstrumented*, and the bandwidth workers were given a span so
+the parallel phase is visible at all.
+
+That is the failure mode this whole view has to guard against: **a picture invites
+more trust than a table.** Time in uninstrumented code reads as idle and looks
+identical to a machine with nothing to do. The page states its lane count, its
+uninstrumented count, and any dropped events, so the denominator is never
+implicit.
 
 ## Delivery
 

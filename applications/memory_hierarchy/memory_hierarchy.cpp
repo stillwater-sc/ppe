@@ -42,6 +42,7 @@
 #include <ppe/probe/memory.hpp>
 #include <ppe/probe/sampler.hpp>
 #include <ppe/provenance.hpp>
+#include <ppe/report/schedule_report.hpp>
 #include <ppe/trace.hpp>
 #include <ppe/version.hpp>
 
@@ -93,6 +94,7 @@ void print_help() {
         "      --line-bytes N override the cache line size (default: detected)\n"
         "      --trace PATH   write a Chrome Trace Event JSON of the sweep\n"
         "      --profile      sample the sweep and report where the time went\n"
+        "      --schedule P   write a schedule and occupancy HTML page\n"
         "      --csv PATH     write results as CSV, with provenance comments\n"
         "      --json         emit the provenance record as JSON and exit\n"
         "      --no-threads   skip the thread scaling sweep\n"
@@ -182,6 +184,10 @@ double measure_bandwidth_threaded_gbs(std::size_t bytes_per_thread, unsigned thr
     for (unsigned t = 0; t < threads; ++t) {
         pool.emplace_back([&, t] {
             ppe::trace::global().name_thread("bandwidth worker");
+            // Instrumented, or the parallel phase is invisible in a schedule:
+            // a named lane with no spans reads as an idle thread rather than as
+            // an untraced one.
+            ppe::trace::scope worker_span("stream_read", "memory");
             std::vector<double>& a = buffers[t];
 
             // Warm up before the barrier: first touch faults pages in, and a
@@ -464,6 +470,13 @@ int main(int argc, char** argv) {
     // Enabled before any probe runs. Tracing is off by default precisely so a
     // measurement is not perturbed by capture nobody asked for.
     const char* trace_path = parse_str(argc, argv, "--trace");
+    const char* schedule_path = parse_str(argc, argv, "--schedule");
+    // The schedule page is drawn from the same spans the trace exports, so it
+    // needs recording enabled just as --trace does.
+    if (schedule_path != nullptr && trace_path == nullptr) {
+        ppe::trace::global().enable();
+        ppe::trace::global().name_thread("main");
+    }
     if (trace_path != nullptr) {
         ppe::trace::global().enable();
         ppe::trace::global().name_thread("main");
@@ -583,6 +596,28 @@ int main(int argc, char** argv) {
             std::printf("          WARNING: %zu events dropped (buffer full). The\n"
                         "          trace has invisible gaps; raise the capacity.\n",
                         st.dropped);
+        }
+    }
+
+    if (schedule_path != nullptr) {
+        ppe::report::schedule_stats sst;
+        const std::string page = ppe::report::schedule_to_html(
+            ppe::trace::global().snapshot(), prov, &sst);
+        std::FILE* f = std::fopen(schedule_path, "w");
+        if (f == nullptr) {
+            std::fprintf(stderr, "error: cannot write %s\n", schedule_path);
+            return 1;
+        }
+        std::fwrite(page.data(), 1, page.size(), f);
+        std::fclose(f);
+        std::printf("\nschedule: %llu spans on %zu lanes, peak occupancy %.0f%%,"
+                    " mean %.0f%% -> %s\n",
+                    (unsigned long long)sst.span_count, sst.lanes,
+                    sst.peak_occupancy * 100.0, sst.mean_occupancy * 100.0,
+                    schedule_path);
+        if (sst.dropped > 0) {
+            std::printf("          WARNING: %llu events dropped; the schedule has holes\n",
+                        (unsigned long long)sst.dropped);
         }
     }
 

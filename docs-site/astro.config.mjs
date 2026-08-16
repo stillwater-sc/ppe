@@ -50,6 +50,10 @@ export default defineConfig({
           items: [{ autogenerate: { directory: 'visualization' } }],
         },
         {
+          label: 'Systems',
+          items: [{ autogenerate: { directory: 'systems' } }],
+        },
+        {
           label: 'Tracing',
           items: [{ autogenerate: { directory: 'tracing' } }],
         },
