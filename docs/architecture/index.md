@@ -160,6 +160,19 @@ Reading `kpu-sim/configs/systems/datacenter_hbm.json`:
 — none is measured. The report says so, because the CPU rows beside it are the
 only ones produced by running code on the hardware.
 
+**Vendor sysfs, no runtime needed.** Intel clocks come from the i915 (`gt_*_freq_mhz`)
+or xe (`device/tile0/gt0/freq0/*`) trees — the same silicon reports through either
+depending on which driver the kernel bound. AMD reads VRAM from amdgpu sysfs and,
+when `amdkfd` is loaded, compute-unit geometry from the KFD topology, matched to
+the card by `location_id` rather than by enumeration order — order would attach
+the wrong node on a machine with two AMD GPUs, which is exactly the machine where
+it matters.
+
+The KFD parser is unit-tested (`tests/kfd.cpp`) because no machine involved in
+this project has an AMD GPU. Its two conversions are the kind that are wrong by a
+constant factor and look plausible: `simd_count` counts SIMDs rather than compute
+units (a CU holds 2 on RDNA, 4 on GCN), and `max_engine_clk_fcompute` is kHz.
+
 Requires a JSON reader; `include/ppe/json.hpp` is a minimal one written for this
 rather than a dependency taken on, with `tests/json.cpp` asserting the shapes
 kpu-sim configs actually contain and the failure modes.
@@ -168,8 +181,8 @@ kpu-sim configs actually contain and the failure modes.
 
 | Target | Sources |
 |---|---|
-| AMD GPU attributes | ROCm/HIP or `/sys/class/kfd` topology — enumerated by PCI today, attributes not read |
-| Intel GPU attributes | Level Zero — enumerated by PCI today, attributes not read |
+| Intel execution-unit count | Level Zero — clocks are read from i915/xe sysfs, but no driver publishes the EU count |
+| AMD on a machine without amdkfd | VRAM only; compute geometry needs the KFD topology |
 | Apple GPU | Metal / IORegistry — needs Objective-C++ |
 | KPU hardware | `kpu-hw` interfaces, once a device exists to probe |
 

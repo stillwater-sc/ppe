@@ -37,6 +37,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <istream>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -47,6 +48,7 @@
 // tools/lint/platform_includes.py.
 #if defined(__linux__) || defined(__APPLE__)
 #  include <dlfcn.h>
+#  include <unistd.h>
 #elif defined(_WIN32)
 #  ifndef WIN32_LEAN_AND_MEAN
 #    define WIN32_LEAN_AND_MEAN
@@ -131,6 +133,187 @@ inline std::string read_file_trimmed(const std::string& path) {
     return s;
 }
 
+/// Which kernel driver is bound, e.g. "i915", "xe", "amdgpu", "nvidia".
+///
+/// The driver decides which sysfs attributes exist, so it is the key to reading
+/// any of them -- and it is more reliable than the PCI id for that purpose,
+/// since Intel's i915 and xe expose different trees for the same silicon.
+inline std::string drm_driver(const std::string& device_dir) {
+    char buf[512];
+    const std::string link = device_dir + "driver";
+    const ssize_t n = ::readlink(link.c_str(), buf, sizeof(buf) - 1);
+    if (n <= 0) return {};
+    buf[n] = '\0';
+    std::string s(buf);
+    const std::size_t slash = s.find_last_of('/');
+    return slash == std::string::npos ? s : s.substr(slash + 1);
+}
+
+/// PCI address of a DRM device, e.g. "0000:00:02.0".
+inline std::string drm_pci_address(int card) {
+    char buf[512];
+    const std::string link = "/sys/class/drm/card" + std::to_string(card) + "/device";
+    const ssize_t n = ::readlink(link.c_str(), buf, sizeof(buf) - 1);
+    if (n <= 0) return {};
+    buf[n] = '\0';
+    std::string s(buf);
+    const std::size_t slash = s.find_last_of('/');
+    return slash == std::string::npos ? s : s.substr(slash + 1);
+}
+
+/// Intel attributes from the i915 / xe sysfs trees.
+///
+/// FREQUENCIES ONLY, and that is the honest limit: neither driver publishes the
+/// execution-unit count, which is the number an occupancy or roofline model
+/// actually wants. Getting it needs Level Zero (a runtime dependency) or a PCI
+/// id table (a database that is wrong for every part released after it was
+/// written). Reporting the clocks and saying what is missing beats inventing an
+/// EU count from a lookup table.
+///
+/// i915 puts them at the card root; xe moved them under device/tile0/gt0/freq0.
+/// Both are tried, because the same silicon reports through either depending on
+/// which driver the kernel bound.
+inline void fill_intel_gpu(int card, const std::string& device_dir, accelerator& a) {
+    const std::string root = "/sys/class/drm/card" + std::to_string(card) + "/";
+    struct { const char* path; const char* label; } candidates[] = {
+        {"gt_RP0_freq_mhz", "max"},      // i915: RP0 is the hardware maximum
+        {"gt_max_freq_mhz", "max"},
+        {"device/tile0/gt0/freq0/rp0_freq", "max"},  // xe
+        {"gt_RPn_freq_mhz", "min"},
+        {"gt_min_freq_mhz", "min"},
+        {"device/tile0/gt0/freq0/rpn_freq", "min"},
+    };
+    double max_mhz = 0.0, min_mhz = 0.0;
+    for (const auto& c : candidates) {
+        const std::string v = read_file_trimmed(root + c.path);
+        if (v.empty()) continue;
+        const double mhz = std::strtod(v.c_str(), nullptr);
+        if (mhz <= 0.0) continue;
+        if (std::string(c.label) == "max" && max_mhz == 0.0) max_mhz = mhz;
+        if (std::string(c.label) == "min" && min_mhz == 0.0) min_mhz = mhz;
+    }
+    if (max_mhz > 0.0) {
+        a.clock_mhz = max_mhz;
+        a.source = drm_driver(device_dir);
+        char note[256];
+        std::snprintf(note, sizeof(note),
+                      "GT clock %.0f-%.0f MHz; execution-unit count is not published "
+                      "by this driver (needs Level Zero)",
+                      min_mhz, max_mhz);
+        a.note = note;
+    }
+}
+
+/// The fields of a KFD topology node this reader consumes.
+struct kfd_node {
+    unsigned long long simd_count = 0;
+    unsigned long long simd_per_cu = 0;
+    unsigned long long clk_khz = 0;        ///< max_engine_clk_fcompute
+    unsigned long long lds_kb = 0;
+    unsigned long long location_id = 0;
+    unsigned long long wave_front_size = 0;
+};
+
+/// Parse a KFD node `properties` file: whitespace-separated key/value lines.
+///
+/// Split out from the sysfs walk so it can be tested without an AMD GPU. The
+/// machine this is developed on has none and neither does any CI runner, so the
+/// alternative was shipping a parser nobody had ever run -- see tests/kfd.cpp.
+inline kfd_node parse_kfd_properties(std::istream& in) {
+    kfd_node k;
+    std::string key;
+    unsigned long long value = 0;
+    while (in >> key >> value) {
+        if (key == "simd_count") k.simd_count = value;
+        else if (key == "simd_per_cu") k.simd_per_cu = value;
+        else if (key == "max_engine_clk_fcompute") k.clk_khz = value;
+        else if (key == "lds_size_in_kb") k.lds_kb = value;
+        else if (key == "location_id") k.location_id = value;
+        else if (key == "wave_front_size") k.wave_front_size = value;
+    }
+    return k;
+}
+
+/// Fold a parsed KFD node into an accelerator record.
+inline void apply_kfd_node(const kfd_node& k, accelerator& a) {
+    accel_compute c;
+    c.kind = "CU";
+    // simd_count counts SIMDs, not compute units: a CU contains simd_per_cu of
+    // them (2 on RDNA, 4 on GCN). Reporting simd_count as a CU count would
+    // overstate the geometry by that factor.
+    c.count = k.simd_per_cu > 0 ? static_cast<unsigned>(k.simd_count / k.simd_per_cu)
+                                : static_cast<unsigned>(k.simd_count);
+    a.compute.push_back(c);
+
+    // max_engine_clk_fcompute is in kHz.
+    if (k.clk_khz > 0) a.clock_mhz = static_cast<double>(k.clk_khz) / 1000.0;
+
+    if (k.lds_kb > 0) {
+        accel_memory_level lvl;
+        lvl.name = "LDS/CU";
+        lvl.bytes = static_cast<std::size_t>(k.lds_kb) * 1024u;
+        lvl.instances = c.count;
+        a.memory.push_back(std::move(lvl));
+    }
+    a.source = "kfd";
+    a.note.clear();
+    if (k.wave_front_size > 0) {
+        a.capability = "wave" + std::to_string(k.wave_front_size);
+    }
+}
+
+/// AMD attributes from amdgpu sysfs and, when present, the KFD topology.
+///
+/// The KFD tree is the rich source -- it publishes compute-unit geometry and the
+/// engine clock in a stable key/value format -- but it only exists when the
+/// amdkfd driver is loaded, which a display-only or virtualized AMD GPU will not
+/// have. amdgpu sysfs alone still gives VRAM size and its vendor.
+inline void fill_amd_gpu(int card, const std::string& device_dir, accelerator& a,
+                         const std::string& kfd_root =
+                             "/sys/class/kfd/kfd/topology/nodes/") {
+    const std::string vram = read_file_trimmed(device_dir + "mem_info_vram_total");
+    if (!vram.empty()) {
+        a.total_memory_bytes = std::strtoull(vram.c_str(), nullptr, 10);
+        accel_memory_level lvl;
+        lvl.name = read_file_trimmed(device_dir + "mem_info_vram_vendor");
+        if (lvl.name.empty()) lvl.name = "VRAM";
+        lvl.bytes = a.total_memory_bytes;
+        lvl.instances = 1;
+        a.memory.push_back(std::move(lvl));
+    }
+
+    // Match this card to a KFD node by location_id, which encodes the PCI
+    // bus/device/function. Matching by enumeration order would attach the wrong
+    // node on a machine with more than one AMD GPU -- exactly the machine where
+    // it matters.
+    const std::string addr = drm_pci_address(card);
+    unsigned want_loc = 0;
+    if (addr.size() >= 12) {
+        const unsigned bus = static_cast<unsigned>(std::strtoul(addr.substr(5, 2).c_str(), nullptr, 16));
+        const unsigned dev = static_cast<unsigned>(std::strtoul(addr.substr(8, 2).c_str(), nullptr, 16));
+        const unsigned fn = static_cast<unsigned>(std::strtoul(addr.substr(11, 1).c_str(), nullptr, 16));
+        want_loc = (bus << 8) | (dev << 3) | fn;
+    }
+
+    for (int node = 0; node < 64; ++node) {
+        const std::string props =
+            kfd_root + std::to_string(node) + "/properties";
+        std::ifstream in(props);
+        if (!in) continue;
+
+        const kfd_node k = parse_kfd_properties(in);
+        // simd_count is 0 on the CPU node the KFD topology also publishes.
+        if (k.simd_count == 0) continue;
+        if (want_loc != 0 && k.location_id != want_loc) continue;
+
+        apply_kfd_node(k, a);
+        break;
+    }
+    if (a.source != "kfd" && a.note.empty()) {
+        a.note = "amdgpu sysfs only; load amdkfd for compute-unit geometry";
+    }
+}
+
 /// Enumerate GPUs via the DRM subsystem.
 ///
 /// This is the floor: it works on a machine with no vendor runtime, no CUDA, no
@@ -156,12 +339,21 @@ inline std::vector<accelerator> gpus_from_drm() {
                       a.pci_vendor, a.pci_device);
         a.name = buf;
 
-        // Some drivers publish VRAM size; integrated parts do not.
-        const std::string vram = read_file_trimmed(base + "mem_info_vram_total");
-        if (!vram.empty()) {
-            a.total_memory_bytes = std::strtoull(vram.c_str(), nullptr, 10);
-        }
         a.note = "identified from PCI ids; install the vendor runtime for attributes";
+
+        // Vendor-specific sysfs, which needs no runtime at all. What each
+        // vendor publishes differs enough that a common path would report the
+        // intersection, which is almost nothing.
+        if (a.pci_vendor == 0x8086) {
+            fill_intel_gpu(card, base, a);
+        } else if (a.pci_vendor == 0x1002) {
+            fill_amd_gpu(card, base, a);
+        } else {
+            const std::string vram = read_file_trimmed(base + "mem_info_vram_total");
+            if (!vram.empty()) {
+                a.total_memory_bytes = std::strtoull(vram.c_str(), nullptr, 10);
+            }
+        }
         out.push_back(std::move(a));
     }
     return out;

@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Intel and AMD GPU attributes from vendor sysfs, needing no runtime: Intel GT
+  clocks from i915/xe, AMD VRAM from amdgpu plus compute-unit geometry from the
+  KFD topology when `amdkfd` is loaded, matched by `location_id`. The KFD
+  parser is unit-tested (`tests/kfd.cpp`) since no machine in this project has
+  an AMD GPU.
+- `tools/lint/platform_includes.py`, run in CI: catches a platform API used
+  without the header that declares it. Added after the third occurrence of that
+  bug, each of which broke only Windows.
+
 - GPU and KPU detection (`include/ppe/detect/accelerator.hpp`): PCI enumeration
   via DRM with no vendor software required, NVIDIA attributes through the CUDA
   driver API loaded at runtime (no SDK at build time), and KPU attributes read
