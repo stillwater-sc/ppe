@@ -127,10 +127,16 @@ void print_text(const ppe::provenance& p) {
                     "SVE present; width is implementation defined and not reported");
     }
 
-    const ppe::clock_claim clk = ppe::detect_clock();
-    if (clk.ghz > 0.0) {
-        std::printf("  %-22s %.3f GHz (%s, %s -- a claim, not a measurement)\n", "clock",
-                    clk.ghz, clk.source.c_str(), clk.is_max ? "maximum" : "nominal");
+    const ppe::clock_reading clk = ppe::best_clock();
+    if (clk.ghz > 0.0 && clk.measured) {
+        std::printf("  %-22s %.3f GHz (perf_event -- MEASURED sustained)\n", "clock",
+                    clk.ghz);
+    } else if (clk.ghz > 0.0) {
+        std::printf("  %-22s %.3f GHz (%s -- a claim, not a measurement)\n", "clock",
+                    clk.ghz, clk.source.c_str());
+        if (!clk.note.empty()) {
+            std::printf("  %-22s %s\n", "", clk.note.c_str());
+        }
     } else {
         std::printf("  %-22s not detected (pass --ghz to consumers)\n", "clock");
     }

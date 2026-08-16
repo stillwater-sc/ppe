@@ -151,7 +151,18 @@ Port `peak.hpp`'s *role*, not its constants: ops/cycle derived from the detected
 ISA. The roofline falls out of phases 1 and 3 — modelled compute peak against
 measured bandwidth gives the ridge point.
 
-**Amendment: the clock is a claim, not a measurement.** This phase originally
+**Resolved: the clock is measured where the kernel permits it.**
+`include/ppe/probe/counters.hpp` opens `PERF_COUNT_HW_CPU_CYCLES` for the
+calling thread and divides counted cycles by wall time, giving a sustained
+figure rather than a specification. `ppe::best_clock()` returns it labelled
+`measured`, or the OS claim labelled as such with the reason measurement was
+unavailable. Access is gated by `perf_event_paranoid`: 2 or lower suffices,
+because the counter sets `exclude_kernel`; the development machine reports 4 and
+therefore exercises the fallback. A machine that denies counters is a normal
+machine, and the report says which kind it is rather than presenting either as
+the other.
+
+**Original amendment, retained for the reasoning:** This phase originally
 called for "a sustained-clock measurement rather than a command-line flag".
 Reaching that honestly needs a performance counter (privileged, and with no
 portable equivalent), or the timestamp counter (invariant since Nehalem — it

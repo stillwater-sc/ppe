@@ -40,6 +40,8 @@
 // efficiency computed from it an UNDER-estimate of what the machine achieved.
 #pragma once
 
+#include <ppe/probe/counters.hpp>
+
 #include <cstddef>
 #include <string>
 
@@ -64,6 +66,17 @@ struct clock_claim {
     double ghz = 0.0;         ///< 0 = not detected
     std::string source;       ///< "cpufreq", "proc", "sysctl", "registry", ""
     bool is_max = false;      ///< true = maximum/nominal, false = instantaneous
+};
+
+/// A clock figure with its provenance: claimed by the OS, or measured from
+/// hardware counters. The distinction is the whole point -- see
+/// ppe/probe/counters.hpp -- so it is carried in the type rather than in a
+/// comment at the call site.
+struct clock_reading {
+    double ghz = 0.0;
+    bool measured = false;    ///< true = counted cycles, false = OS claim
+    std::string source;       ///< "perf_event", or the claim's source
+    std::string note;         ///< why measurement was unavailable, when it was
 };
 
 namespace detect {
@@ -174,6 +187,33 @@ inline clock_claim detect_clock() {
 #else
     return clock_claim{};
 #endif
+}
+
+/// The best clock available: measured when the kernel permits counters,
+/// otherwise the OS claim, and always labelled with which one it is.
+///
+/// Deliberately NOT silently preferring one: a caller that prints a clock must
+/// be able to say whether the core really ran at it. Callers wanting only the
+/// claim keep using detect_clock().
+inline clock_reading best_clock(double measure_seconds = 0.2) {
+    clock_reading r;
+
+    const double measured = probe::measure_clock_ghz(measure_seconds);
+    if (measured > 0.0) {
+        r.ghz = measured;
+        r.measured = true;
+        r.source = "perf_event";
+        return r;
+    }
+
+    const probe::counter_support sup = probe::counters_available();
+    r.note = sup.note;
+
+    const clock_claim c = detect_clock();
+    r.ghz = c.ghz;
+    r.measured = false;
+    r.source = c.source.empty() ? "none" : c.source;
+    return r;
 }
 
 }  // namespace ppe

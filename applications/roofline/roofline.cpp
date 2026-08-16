@@ -136,7 +136,10 @@ int main(int argc, char** argv) {
     }
 
     const ppe::isa_capabilities isa = ppe::detect_isa();
-    const ppe::clock_claim clk = ppe::detect_clock();
+    // Measured when the kernel permits hardware counters, the OS claim
+    // otherwise. The peak model multiplies by this number, so whether it was
+    // counted or asserted changes what every GOP/s figure below means.
+    const ppe::clock_reading clk = ppe::best_clock();
 
     const unsigned fma_units =
         static_cast<unsigned>(parse_int(argc, argv, "--fma-units", 2));
@@ -169,10 +172,16 @@ int main(int argc, char** argv) {
         return 2;
     }
 
-    std::printf("clock       : %.3f GHz (%s, %s) -- a CLAIM, not a sustained measurement\n",
-                ghz,
-                clk.source.empty() ? "user-supplied" : clk.source.c_str(),
-                clk.is_max ? "maximum" : "nominal/instantaneous");
+    if (clk.measured) {
+        std::printf("clock       : %.3f GHz (perf_event) -- MEASURED sustained clock\n",
+                    ghz);
+    } else {
+        std::printf("clock       : %.3f GHz (%s) -- a CLAIM, not a sustained measurement\n",
+                    ghz, clk.source.c_str());
+        if (!clk.note.empty()) {
+            std::printf("              %s\n", clk.note.c_str());
+        }
+    }
     std::printf("fma units   : %u (assumed; no instruction reports this)\n\n", fma_units);
 
     const ppe::peak_model model = ppe::make_peak_model(isa, fma_units, ghz);

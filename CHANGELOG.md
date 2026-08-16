@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `include/ppe/probe/counters.hpp`: hardware performance counters via
+  `perf_event`, giving a MEASURED sustained core clock where the kernel permits
+  it. `ppe::best_clock()` labels the figure measured or claimed and states why
+  when it fell back. `roofline` and `tool_topology` report the distinction.
+
 - Intel and AMD GPU attributes from vendor sysfs, needing no runtime: Intel GT
   clocks from i915/xe, AMD VRAM from amdgpu plus compute-unit geometry from the
   KFD topology when `amdkfd` is loaded, matched by `location_id`. The KFD
