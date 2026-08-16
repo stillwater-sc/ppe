@@ -15,9 +15,12 @@
 #include <ppe/probe/sampler.hpp>
 
 #include <cmath>
-#include <sched.h>
 #include <cstdio>
 #include <string>
+
+#if defined(__linux__)
+#  include <sched.h>
+#endif
 
 namespace {
 

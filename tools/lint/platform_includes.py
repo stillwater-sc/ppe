@@ -108,8 +108,48 @@ def mentions(text, symbol):
 
 
 PLATFORM_GUARD = re.compile(
-    r'#\s*(if|elif)\s+.*(defined\s*\(?\s*(__linux__|_WIN32|__APPLE__|PPE_HAS_X86_CPUID|__aarch64__)|'
-    r'__linux__|_WIN32|__APPLE__)')
+    r'#\s*(if|elif)\s+.*(defined\s*\(?\s*(__linux__|_WIN32|__APPLE__|__aarch64__|'
+    r'__x86_64__|_M_X64|__GNUC__|__clang__|_MSC_VER)|'
+    r'__linux__|_WIN32|__APPLE__|PPE_HAS_X86_CPUID|PPE_FMA_PROBE_X86)')
+
+# Headers that do not exist on every platform. Including one outside a platform
+# guard breaks the build on the platforms that lack it -- which, on a project
+# developed on Linux, means Windows and macOS find out in CI.
+PLATFORM_HEADERS = {
+    "sched.h", "unistd.h", "dlfcn.h", "pthread.h", "fcntl.h", "elf.h",
+    "windows.h", "winsock2.h", "ws2tcpip.h", "intrin.h", "immintrin.h",
+    "cpuid.h", "sys/sysctl.h", "sys/auxv.h", "sys/mman.h", "sys/ioctl.h",
+    "sys/socket.h", "sys/syscall.h", "sys/types.h", "netinet/in.h",
+    "netinet/tcp.h", "arpa/inet.h", "linux/perf_event.h", "asm/unistd.h",
+}
+
+
+def unguarded_platform_includes(text):
+    """Platform-specific headers included outside any platform guard.
+
+    The inverse of the symbol rule: that one catches a symbol used without its
+    header, this catches a header included where it does not exist. Both broke
+    Windows, and neither is reachable from a Linux build.
+    """
+    inside = []
+    bad = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith('#if'):
+            inside.append(bool(PLATFORM_GUARD.match(stripped)))
+            continue
+        if stripped.startswith('#elif'):
+            if inside:
+                inside[-1] = inside[-1] or bool(PLATFORM_GUARD.match(stripped))
+            continue
+        if stripped.startswith('#endif'):
+            if inside:
+                inside.pop()
+            continue
+        m = re.match(r'#\s*include\s*[<"]([^>"]+)[>"]', stripped)
+        if m and m.group(1) in PLATFORM_HEADERS and not any(inside):
+            bad.append(m.group(1))
+    return bad
 
 
 def guarded_symbols(text):
@@ -185,6 +225,13 @@ def main():
             if header == "windows.h" and "winsock2.h" in have:
                 continue
             failures.append(f"{path}: uses '{symbol}' but does not include <{header}>")
+
+    for path in sorted(files):
+        raw = path.read_text(encoding="utf-8", errors="replace")
+        for header in unguarded_platform_includes(strip_comments(raw)):
+            failures.append(
+                f"{path}: includes <{header}> outside a platform guard; it does not "
+                f"exist everywhere")
 
     failures += check_test_portability(files)
 
