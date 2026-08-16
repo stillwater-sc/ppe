@@ -155,6 +155,56 @@ E-core it reported a P-core's ceiling. On this part cpu0 says 4.9 GHz, cpu4 says
 5.0, and cpu16 says 3.8 — so it was wrong even between P-cores. It now reads the
 current CPU.
 
+### The FMA issue width, measured
+
+`peak.hpp` carried the FMA unit count as its one undetectable factor, defaulting
+to 2. `include/ppe/probe/fma.hpp` now measures it.
+
+**Why this is measurable when compute peak was not.** `peak.hpp` records a probe
+that tried to measure achievable GOP/s and failed twice — 3.8 million GOP/s with
+the loop folded away, then 17.7 GOP/s once operands were opaque, below what real
+kernels achieved. That probe measured a *rate*, in operations per second, and
+inherited every problem of wall-clock timing. This measures a *ratio* — FMA
+instructions per **cycle** — from hardware counters. Frequency cancels out, so no
+sustained clock is needed and thermal state is irrelevant.
+
+Measured on the i7-12700K:
+
+| core | FMA/cycle | units | fp64 peak |
+|---|---|---|---|
+| P-core (Golden Cove) | 1.9997 | 2 | 78.0 GOP/s |
+| E-core (Gracemont) | 0.9998 | 1 | 29.5 GOP/s |
+
+Both match the documented microarchitecture. **The default of 2 was wrong for
+E-cores**: combined with the `cpu0` clock bug, an E-core roofline reported
+78.4 GOP/s where the truth is 29.5 — 2.66x too high.
+
+**The premise had to be checked, and failed first time.** The probe divides a
+*known* instruction count by measured cycles, so it is only valid if the compiler
+emits the loop that was written. Initialising twelve accumulators to the same
+value made all twelve chains provably equal, so the compiler collapsed them into
+one — the disassembly held two `vfmadd231pd`, not twelve. The probe then reported
+**2.9992 FMA/cycle on a part that issues 2**, having actually measured FMA
+latency (0.25/cycle) scaled by a 12x-too-large numerator.
+
+Two changes followed: distinct starting values so the chains cannot be merged,
+and a second counter for retired instructions so the probe **detects its own
+invalidation** — if retired instructions do not cover the FMAs requested, it
+refuses to report rather than dividing by a premise that no longer holds.
+
+### Counters are bound to a PMU, threads are not
+
+A counter is bound to a PMU when it is opened, but an unpinned thread can
+migrate. On a hybrid part it can land on a core the *other* PMU owns, where the
+counter reads zero — so a measurement would describe a core it never ran on.
+`measure_clock_ghz` records the CPU on both sides and refuses when the migration
+**crossed PMU domains**; a move between two identical cores leaves the counter
+valid and is accepted, since rejecting those would refuse to measure on any
+unpinned process.
+
+This surfaced as a test that failed once under load and would not reproduce in 24
+attempts. Running unpinned across all 20 CPUs reproduced it every time.
+
 ### GPU and KPU
 
 `include/ppe/detect/accelerator.hpp`. Same framing as the CPU: a device is a

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `include/ppe/probe/fma.hpp`: measures the FMA issue width as instructions per
+  cycle from hardware counters, removing the peak model's last assumed factor.
+  Verified 2 on Golden Cove and 1 on Gracemont. The probe cross-checks retired
+  instructions against the loop it was written to issue and refuses to report
+  when the compiler removed work.
+
 - `include/ppe/probe/counters.hpp`: hardware performance counters via
   `perf_event`, giving a MEASURED sustained core clock where the kernel permits
   it. `ppe::best_clock()` labels the figure measured or claimed and states why

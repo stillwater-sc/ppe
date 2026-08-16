@@ -29,6 +29,7 @@
 #include <ppe/detect/isa.hpp>
 #include <ppe/harness.hpp>
 #include <ppe/peak.hpp>
+#include <ppe/probe/fma.hpp>
 #include <ppe/platform.hpp>
 #include <ppe/provenance.hpp>
 #include <ppe/version.hpp>
@@ -141,8 +142,15 @@ int main(int argc, char** argv) {
     // counted or asserted changes what every GOP/s figure below means.
     const ppe::clock_reading clk = ppe::best_clock();
 
+    // MEASURED where possible. This was the peak model's last assumed factor,
+    // and it is wrong by 2x on an E-core: Golden Cove issues 2 FMAs/cycle,
+    // Gracemont 1. An explicit --fma-units still wins, for reproducing a figure
+    // from another machine.
+    const ppe::probe::fma_measurement fma = ppe::probe::measure_fma_units();
+    const int fma_override = parse_int(argc, argv, "--fma-units", 0);
     const unsigned fma_units =
-        static_cast<unsigned>(parse_int(argc, argv, "--fma-units", 2));
+        fma_override > 0 ? static_cast<unsigned>(fma_override)
+                         : (fma.ok ? static_cast<unsigned>(fma.rounded) : 2u);
     const double ghz = parse_double(argc, argv, "--ghz", clk.ghz);
     const std::size_t bytes =
         static_cast<std::size_t>(parse_int(argc, argv, "--mib", 128)) * kMiB;
@@ -182,7 +190,16 @@ int main(int argc, char** argv) {
             std::printf("              %s\n", clk.note.c_str());
         }
     }
-    std::printf("fma units   : %u (assumed; no instruction reports this)\n\n", fma_units);
+    if (fma_override > 0) {
+        std::printf("fma units   : %u (given on the command line)\n\n", fma_units);
+    } else if (fma.ok) {
+        std::printf("fma units   : %u (MEASURED: %.3f FMA/cycle over %llu cycles)\n\n",
+                    fma_units, fma.fmas_per_cycle,
+                    static_cast<unsigned long long>(fma.cycles));
+    } else {
+        std::printf("fma units   : %u (assumed -- %s)\n\n", fma_units,
+                    fma.note.c_str());
+    }
 
     const ppe::peak_model model = ppe::make_peak_model(isa, fma_units, ghz);
 

@@ -77,7 +77,13 @@ struct counter_support {
 /// refused, and `note()` says what to do about it.
 class cycle_counter {
 public:
-    cycle_counter() { open_counter(); }
+    /// `event` is a PERF_COUNT_HW_* id. Cycles by default; the FMA probe also
+    /// needs PERF_COUNT_HW_INSTRUCTIONS to check that the compiler emitted the
+    /// loop it was asked for.
+    explicit cycle_counter(unsigned long long event = 0 /* PERF_COUNT_HW_CPU_CYCLES */) {
+        event_ = event;
+        open_counter();
+    }
     ~cycle_counter() { close_counter(); }
 
     cycle_counter(const cycle_counter&) = delete;
@@ -115,11 +121,13 @@ public:
 
 private:
     int fd_ = -1;
+    unsigned long long event_ = 0;
     int paranoid_ = -99;
     std::string note_;
     std::string pmu_ = "generic";
 
 #if defined(__linux__)
+public:
     /// The PMU covering `cpu`, on a hybrid part. Returns -1 when the machine is
     /// not hybrid, in which case PERF_TYPE_HARDWARE is correct.
     ///
@@ -144,6 +152,7 @@ private:
         return -1;
     }
 
+private:
     /// "0-15" or "0,2,4-7" contains `cpu`?
     static bool cpu_list_contains(const std::string& list, int cpu) {
         std::size_t pos = 0;
@@ -195,7 +204,7 @@ private:
         // but hardcodes an Intel event number, so it would need a table per
         // vendor. The third is the kernel's documented extended-type mechanism
         // and is what perf itself emits.
-        attr.config = PERF_COUNT_HW_CPU_CYCLES;
+        attr.config = event_;
         if (hybrid >= 0) {
             attr.config |= static_cast<std::uint64_t>(hybrid) << 32;
         }
@@ -265,6 +274,17 @@ inline double measure_clock_ghz(double seconds = 0.2, std::string* why = nullptr
         return 0.0;
     }
 
+    // The counter is bound to a PMU when it is opened. On a hybrid part an
+    // unpinned thread can then migrate to a core the OTHER PMU owns, where this
+    // counter counts nothing -- so the measurement would silently describe a
+    // core it never ran on, or report zero. Recording the CPU on both sides
+    // turns that into a detectable condition.
+#if defined(__linux__)
+    const int cpu_before = ::sched_getcpu();
+#else
+    const int cpu_before = -1;
+#endif
+
     const auto deadline =
         std::chrono::steady_clock::now() +
         std::chrono::duration_cast<std::chrono::steady_clock::duration>(
@@ -287,6 +307,29 @@ inline double measure_clock_ghz(double seconds = 0.2, std::string* why = nullptr
     const auto t1 = std::chrono::steady_clock::now();
     const std::uint64_t cycles = c.stop();
     (void)sink;
+
+#if defined(__linux__)
+    const int cpu_after = ::sched_getcpu();
+    // Only a migration ACROSS PMU DOMAINS invalidates the count. Moving between
+    // two identical cores leaves the counter bound to a PMU that still owns the
+    // core, so the measurement stands -- rejecting those would refuse to measure
+    // on any unpinned process, which is most of them.
+    if (cpu_before >= 0 && cpu_after >= 0 && cpu_before != cpu_after) {
+        std::string before_pmu, after_pmu;
+        const int dom_before = cycle_counter::hybrid_pmu_type(cpu_before, before_pmu);
+        const int dom_after = cycle_counter::hybrid_pmu_type(cpu_after, after_pmu);
+        if (dom_before != dom_after) {
+            if (why != nullptr) {
+                *why = "the thread migrated across core types during measurement (cpu " +
+                       std::to_string(cpu_before) + " on " + before_pmu + " to cpu " +
+                       std::to_string(cpu_after) + " on " + after_pmu +
+                       "); the counter stays bound to the PMU it was opened on, so the "
+                       "result would describe a core it did not run on -- pin with taskset";
+            }
+            return 0.0;
+        }
+    }
+#endif
 
     const double elapsed = std::chrono::duration<double>(t1 - t0).count();
     if (cycles == 0) {
