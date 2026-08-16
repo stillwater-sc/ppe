@@ -48,6 +48,7 @@
 #if defined(__linux__)
 #  include <cstdlib>
 #  include <fstream>
+#  include <sched.h>
 #elif defined(__APPLE__)
 #  include <sys/sysctl.h>
 #elif defined(_WIN32)
@@ -86,12 +87,19 @@ namespace detect {
 inline clock_claim clock_linux() {
     clock_claim c;
 
-    // cpufreq reports kHz. scaling_max_freq is the policy ceiling, which is the
-    // most stable thing available -- the "current" file changes between the read
-    // and any use of it.
-    for (const char* path : {"/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq",
-                             "/sys/devices/system/cpu/cpu0/cpufreq/scaling_max_freq"}) {
-        std::ifstream in(path);
+    // THE CURRENT CPU, not cpu0. On a hybrid part the two differ: measured on an
+    // i7-12700K, cpu0 reports 4.9 GHz, cpu4 reports 5.0, and cpu16 (an E-core)
+    // reports 3.8. Reading cpu0 while pinned to an E-core reported a P-core's
+    // ceiling as that core's clock -- a wrong number, not merely an imprecise
+    // one, and one every peak model downstream would have multiplied by.
+    const int cpu = ::sched_getcpu();
+    const std::string base = "/sys/devices/system/cpu/cpu" +
+                             std::to_string(cpu >= 0 ? cpu : 0) + "/cpufreq/";
+
+    // cpufreq reports kHz. cpuinfo_max_freq is the hardware ceiling;
+    // scaling_max_freq is the policy one, which may be lower.
+    for (const std::string path : {base + "cpuinfo_max_freq", base + "scaling_max_freq"}) {
+        std::ifstream in(path.c_str());
         if (!in) continue;
         double khz = 0.0;
         if (in >> khz && khz > 0.0) {
@@ -198,16 +206,15 @@ inline clock_claim detect_clock() {
 inline clock_reading best_clock(double measure_seconds = 0.2) {
     clock_reading r;
 
-    const double measured = probe::measure_clock_ghz(measure_seconds);
+    std::string why;
+    const double measured = probe::measure_clock_ghz(measure_seconds, &why);
     if (measured > 0.0) {
         r.ghz = measured;
         r.measured = true;
         r.source = "perf_event";
         return r;
     }
-
-    const probe::counter_support sup = probe::counters_available();
-    r.note = sup.note;
+    r.note = why;
 
     const clock_claim c = detect_clock();
     r.ghz = c.ghz;

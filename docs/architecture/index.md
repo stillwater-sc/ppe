@@ -119,6 +119,42 @@ unimplemented on Apple silicon — so the probes still run but the result is
 marked *not pinned* rather than attributed to a cluster that may not have
 produced it.
 
+### The clock, measured
+
+`include/ppe/probe/counters.hpp` counts `PERF_COUNT_HW_CPU_CYCLES` for the
+calling thread and divides by wall time, giving a sustained clock rather than a
+specification. `ppe::best_clock()` labels the result `measured` or falls back to
+the OS claim and says why.
+
+Measured on the i7-12700K, pinned:
+
+| core | measured sustained | claimed max |
+|---|---|---|
+| P-core (cpu4) | 4.861 GHz | 5.000 GHz |
+| E-core (cpu16) | 3.794 GHz | 3.800 GHz |
+
+The P-core does not sustain its advertised ceiling under load; the E-core does.
+Every peak model multiplies by this number, so a 2.8% error propagates into
+every GOP/s figure — and it is invisible without counting cycles.
+
+Access is gated by `perf_event_paranoid`: 2 or lower suffices, since the counter
+sets `exclude_kernel`. A machine that denies counters is a normal machine, and
+the fallback says which kind it is.
+
+**Two hybrid-CPU bugs this surfaced**, both of which reported a plausible number:
+
+**The generic PMU counts zero on E-cores.** Alder Lake exposes `cpu_core` and
+`cpu_atom`; `PERF_TYPE_HARDWARE` binds to the P-core PMU, so on an E-core the
+counter *opens successfully and counts nothing*. No error to check. The correct
+encoding puts the PMU in the upper 32 bits of `config`, which was established by
+testing all four plausible forms on both core types — the obvious guess
+(`type = pmu`) counts zero on both.
+
+**cpufreq was read from `cpu0` regardless of the running core.** Pinned to an
+E-core it reported a P-core's ceiling. On this part cpu0 says 4.9 GHz, cpu4 says
+5.0, and cpu16 says 3.8 — so it was wrong even between P-cores. It now reads the
+current CPU.
+
 ### GPU and KPU
 
 `include/ppe/detect/accelerator.hpp`. Same framing as the CPU: a device is a

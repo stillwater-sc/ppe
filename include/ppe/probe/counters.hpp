@@ -28,6 +28,15 @@
 // act on, and the caller must fall back to the claim rather than reporting a
 // zero. A machine that denies counters is a normal machine.
 //
+// HYBRID CPUs NEED THE RIGHT PMU. Alder Lake and later expose two PMUs --
+// cpu_core and cpu_atom -- and PERF_TYPE_HARDWARE binds to the P-core one. On
+// an E-core the counter then OPENS SUCCESSFULLY AND COUNTS ZERO, which is the
+// worst possible failure: no error to check, and a caller that treats zero as
+// "unavailable" falls back to a claim while believing it tried. Measured here:
+// 3,281,921 cycles on cpu4 against 0 on cpu16 for identical work. So the PMU is
+// selected by which one lists the current CPU in its `cpus` file, and a zero
+// count is reported as its own condition rather than folded into "denied".
+//
 // THE API EXISTS ON EVERY PLATFORM. Only the syscall is behind a guard: burying
 // the type itself would make anything using it -- including its test -- compile
 // on Linux alone, which is exactly the bug tools/lint/platform_includes.py was
@@ -38,6 +47,7 @@
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <string>
@@ -46,6 +56,7 @@
 #  include <asm/unistd.h>
 #  include <linux/perf_event.h>
 #  include <sys/ioctl.h>
+#  include <sched.h>
 #  include <sys/syscall.h>
 #  include <unistd.h>
 #endif
@@ -57,6 +68,7 @@ struct counter_support {
     bool available = false;
     int  paranoid = -99;      ///< observed perf_event_paranoid, -99 if unread
     std::string note;         ///< actionable reason when unavailable
+    std::string pmu;          ///< which PMU was opened: "cpu_core", "cpu_atom", "generic"
 };
 
 /// Counts unhalted core cycles on the calling thread.
@@ -74,6 +86,7 @@ public:
     bool ok() const { return fd_ >= 0; }
     const std::string& note() const { return note_; }
     int paranoid() const { return paranoid_; }
+    const std::string& pmu() const { return pmu_; }
 
     void start() {
 #if defined(__linux__)
@@ -104,6 +117,53 @@ private:
     int fd_ = -1;
     int paranoid_ = -99;
     std::string note_;
+    std::string pmu_ = "generic";
+
+#if defined(__linux__)
+    /// The PMU covering `cpu`, on a hybrid part. Returns -1 when the machine is
+    /// not hybrid, in which case PERF_TYPE_HARDWARE is correct.
+    ///
+    /// Each PMU publishes the CPUs it covers in its `cpus` file, so this asks
+    /// the kernel which one owns this core rather than inferring it from a
+    /// core-type heuristic that would need updating per microarchitecture.
+    static int hybrid_pmu_type(int cpu, std::string& name) {
+        for (const char* pmu : {"cpu_core", "cpu_atom"}) {
+            const std::string base = std::string("/sys/bus/event_source/devices/") + pmu;
+            std::ifstream cpus(base + "/cpus");
+            if (!cpus) continue;
+            std::string list;
+            std::getline(cpus, list);
+            if (!cpu_list_contains(list, cpu)) continue;
+            std::ifstream type(base + "/type");
+            int t = -1;
+            if (type && (type >> t) && t >= 0) {
+                name = pmu;
+                return t;
+            }
+        }
+        return -1;
+    }
+
+    /// "0-15" or "0,2,4-7" contains `cpu`?
+    static bool cpu_list_contains(const std::string& list, int cpu) {
+        std::size_t pos = 0;
+        while (pos < list.size()) {
+            std::size_t comma = list.find(',', pos);
+            if (comma == std::string::npos) comma = list.size();
+            const std::string part = list.substr(pos, comma - pos);
+            const std::size_t dash = part.find('-');
+            if (dash == std::string::npos) {
+                if (!part.empty() && std::atoi(part.c_str()) == cpu) return true;
+            } else {
+                const int lo = std::atoi(part.substr(0, dash).c_str());
+                const int hi = std::atoi(part.substr(dash + 1).c_str());
+                if (cpu >= lo && cpu <= hi) return true;
+            }
+            pos = comma + 1;
+        }
+        return false;
+    }
+#endif
 
     void open_counter() {
 #if defined(__linux__)
@@ -112,11 +172,33 @@ private:
             if (in) in >> paranoid_;
         }
 
+        // Pick the PMU that owns the current CPU before opening, so a hybrid
+        // machine counts on the core it is actually running on.
+        const int cpu = ::sched_getcpu();
+        const int hybrid = cpu >= 0 ? hybrid_pmu_type(cpu, pmu_) : -1;
+
         perf_event_attr attr;
         std::memset(&attr, 0, sizeof(attr));
         attr.type = PERF_TYPE_HARDWARE;
         attr.size = sizeof(attr);
+        // HYBRID ENCODING: the PMU goes in the UPPER 32 BITS OF CONFIG, with
+        // type left as PERF_TYPE_HARDWARE. Determined by testing all four
+        // plausible encodings on both core types of an i7-12700K:
+        //
+        //   type=HARDWARE, config=event              P-core 195, E-core 0
+        //   type=pmu,      config=event              P-core   0, E-core 0
+        //   type=HARDWARE, config=(pmu<<32)|event    P-core 132, E-core 89   <--
+        //   type=pmu,      config=0x3c (raw)         P-core 137, E-core 88
+        //
+        // The first row is the original bug: silently zero on E-cores. The
+        // second was the obvious guess and is simply wrong. The fourth works
+        // but hardcodes an Intel event number, so it would need a table per
+        // vendor. The third is the kernel's documented extended-type mechanism
+        // and is what perf itself emits.
         attr.config = PERF_COUNT_HW_CPU_CYCLES;
+        if (hybrid >= 0) {
+            attr.config |= static_cast<std::uint64_t>(hybrid) << 32;
+        }
         attr.disabled = 1;
         // exclude_kernel is what makes this work at paranoid=2, the common
         // default: a user-space-only measurement needs no extra privilege. It
@@ -165,6 +247,7 @@ inline counter_support counters_available() {
     s.available = c.ok();
     s.paranoid = c.paranoid();
     s.note = c.note();
+    s.pmu = c.pmu();
     return s;
 }
 
@@ -175,9 +258,12 @@ inline counter_support counters_available() {
 /// the core busy for the whole window or the figure describes the idle state.
 /// A dependent integer chain does that without touching memory, so what is
 /// measured is the core's clock rather than the memory system's response.
-inline double measure_clock_ghz(double seconds = 0.2) {
+inline double measure_clock_ghz(double seconds = 0.2, std::string* why = nullptr) {
     cycle_counter c;
-    if (!c.ok()) return 0.0;
+    if (!c.ok()) {
+        if (why != nullptr) *why = c.note();
+        return 0.0;
+    }
 
     const auto deadline =
         std::chrono::steady_clock::now() +
@@ -203,7 +289,18 @@ inline double measure_clock_ghz(double seconds = 0.2) {
     (void)sink;
 
     const double elapsed = std::chrono::duration<double>(t1 - t0).count();
-    if (elapsed <= 0.0 || cycles == 0) return 0.0;
+    if (cycles == 0) {
+        // Distinct from "denied": the counter opened and counted nothing, which
+        // on a hybrid part means it was bound to the wrong PMU. Saying so beats
+        // reporting the same message as a permissions failure.
+        if (why != nullptr) {
+            *why = "counter opened on PMU '" + c.pmu() +
+                   "' but counted zero cycles -- likely bound to the wrong PMU for "
+                   "this core";
+        }
+        return 0.0;
+    }
+    if (elapsed <= 0.0) return 0.0;
     return static_cast<double>(cycles) / elapsed / 1e9;
 }
 
