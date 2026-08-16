@@ -9,6 +9,7 @@
 // stages consume. Both are interfaces once anything depends on them.
 
 #include <ppe/cli.hpp>
+#include <ppe/detect/accelerator.hpp>
 #include <ppe/detect/clock.hpp>
 #include <ppe/detect/isa.hpp>
 #include <ppe/detect/topology.hpp>
@@ -37,6 +38,8 @@ void print_help() {
         "      --html PATH  write a self-contained HTML topology report\n"
         "      --topo-json  emit the full cluster topology as JSON\n"
         "      --measure    measure latency and bandwidth per cluster (slow)\n"
+        "      --devices    also report GPUs and KPUs\n"
+        "      --kpu-config PATH  a kpu-sim system configuration to read\n"
         "      --dram-mib N working set for the measured DRAM rows (default 64)\n"
         "\n"
         "PLACEHOLDER: only portable attributes are reported. Cache sizes, NUMA\n"
@@ -192,6 +195,13 @@ int main(int argc, char** argv) {
             measure ? ppe::report::measure_clusters(topo, dram_bytes)
                     : std::vector<ppe::report::cluster_measurement>{};
         std::fputs(ppe::report::to_ascii(topo, meas).c_str(), stdout);
+        if (ppe::has_flag(argc, argv, "--devices")) {
+            const char* kc = ppe::flag_value(argc, argv, "--kpu-config");
+            std::fputs(ppe::report::accelerators_to_ascii(
+                           ppe::detect_accelerators(kc ? kc : ""))
+                           .c_str(),
+                       stdout);
+        }
         return 0;
     }
 

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- GPU and KPU detection (`include/ppe/detect/accelerator.hpp`): PCI enumeration
+  via DRM with no vendor software required, NVIDIA attributes through the CUDA
+  driver API loaded at runtime (no SDK at build time), and KPU attributes read
+  from a kpu-sim system configuration. `tool_topology --devices`.
+- `include/ppe/json.hpp`, a minimal JSON reader written rather than depended on,
+  with `tests/json.cpp`.
+
 - Per-cluster latency and bandwidth (#6): `tool_topology --measure` pins to one
   CPU of each cluster and reports measured figures beside the claimed
   capacities, in ASCII and HTML. Adds `include/ppe/detect/affinity.hpp`

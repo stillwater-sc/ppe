@@ -12,6 +12,7 @@
 // topology dump is for.
 #pragma once
 
+#include <ppe/detect/accelerator.hpp>
 #include <ppe/detect/affinity.hpp>
 #include <ppe/detect/topology.hpp>
 #include <ppe/probe/memory.hpp>
@@ -178,6 +179,73 @@ inline std::string html_escape(const std::string& s) {
 }
 
 }  // namespace detail
+
+/// Accelerators as an ASCII block, appended below the CPU tree.
+///
+/// Absence is printed, not omitted: "no GPU detected" and a blank space mean
+/// different things to someone deciding whether a number is missing or a
+/// machine is.
+inline std::string accelerators_to_ascii(const std::vector<accelerator>& devs) {
+    std::string s = "\nAccelerators:\n";
+    if (devs.empty()) {
+        s += "  none detected (no GPU on this machine, and no KPU configuration\n";
+        s += "  supplied -- pass --kpu-config or set PPE_KPU_CONFIG)\n";
+        return s;
+    }
+    char buf[512];
+    for (const accelerator& d : devs) {
+        std::snprintf(buf, sizeof(buf), "\n+-- [%s] %s  (via %s)\n", to_string(d.kind),
+                      d.name.c_str(), d.source.c_str());
+        s += buf;
+        if (!d.capability.empty()) {
+            std::snprintf(buf, sizeof(buf), "|      capability %s\n", d.capability.c_str());
+            s += buf;
+        }
+        if (d.clock_mhz > 0.0) {
+            std::snprintf(buf, sizeof(buf), "|      clock %.0f MHz\n", d.clock_mhz);
+            s += buf;
+        }
+        for (const accel_compute& c : d.compute) {
+            if (c.rows > 0 && c.cols > 0) {
+                std::snprintf(buf, sizeof(buf), "|      %u x %s %ux%u%s%s\n", c.count,
+                              c.kind.c_str(), c.rows, c.cols,
+                              c.datatype.empty() ? "" : " ", c.datatype.c_str());
+            } else {
+                std::snprintf(buf, sizeof(buf), "|      %u %s\n", c.count, c.kind.c_str());
+            }
+            s += buf;
+        }
+        for (const accel_memory_level& m : d.memory) {
+            std::snprintf(buf, sizeof(buf), "|      %-14s %-10s", m.name.c_str(),
+                          detail::bytes_human(m.bytes).c_str());
+            s += buf;
+            if (m.instances > 1) {
+                std::snprintf(buf, sizeof(buf), " across %u", m.instances);
+                s += buf;
+            }
+            if (m.bandwidth_gbs > 0.0) {
+                std::snprintf(buf, sizeof(buf), "  %.1f GB/s", m.bandwidth_gbs);
+                s += buf;
+            }
+            if (m.latency_ns > 0.0) {
+                std::snprintf(buf, sizeof(buf), "  %.0f ns", m.latency_ns);
+                s += buf;
+            }
+            s += "\n";
+        }
+        if (!d.note.empty()) {
+            std::snprintf(buf, sizeof(buf), "|      note: %s\n", d.note.c_str());
+            s += buf;
+        }
+    }
+    // Every accelerator figure above is CLAIMED -- by a driver or by a
+    // configuration file. Nothing here is measured, and the distinction is the
+    // same one the CPU report draws.
+    s += "\n  All accelerator figures are claimed (driver or configuration), not\n";
+    s += "  measured. The CPU rows above marked \"measured\" are the only ones\n";
+    s += "  this run produced by running code on the hardware.\n";
+    return s;
+}
 
 /// ASCII tree of the machine. `meas` may be empty.
 inline std::string to_ascii(const platform_topology& t,

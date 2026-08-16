@@ -119,12 +119,59 @@ unimplemented on Apple silicon — so the probes still run but the result is
 marked *not pinned* rather than attributed to a cluster that may not have
 produced it.
 
+### GPU and KPU
+
+`include/ppe/detect/accelerator.hpp`. Same framing as the CPU: a device is a
+hierarchy of levels with capacities, and what differs is what sits at each level
+and how many engines share it.
+
+**No SDK at build time.** PPE builds on four platforms with a compiler and CMake
+and nothing else, and detecting a GPU must not change that:
+
+- **PCI enumeration** (`/sys/class/drm` on Linux) identifies a GPU with no vendor
+  software installed at all — the answer to *is there one, and whose*.
+- **The vendor runtime**, if present, is opened at **run** time with `dlopen` /
+  `LoadLibrary` and called through hand-declared prototypes. No headers, no link
+  dependency. A machine without drivers reports "not detected" rather than
+  failing to build. The CUDA driver API is wired this way
+  (`cuDeviceGetAttribute` for SM count, clocks, L2, bus width, compute
+  capability).
+
+**The KPU is not probed, it is configured.** A KPU exists today as the `kpu-sim`
+simulator and as RTL, not as a device on a bus, so its attributes come from a
+kpu-sim **system configuration** — which already describes exactly the hierarchy
+this repository models: memory banks with bandwidth and latency, L3 tiles, L2
+banks, scratchpads, and a systolic compute fabric. Reading that file is the
+data-level coupling the plan describes for mtl5: no shared library, no build
+dependency, just a format. Supply it with `--kpu-config` or `PPE_KPU_CONFIG`.
+
+Reading `kpu-sim/configs/systems/datacenter_hbm.json`:
+
+```
++-- [KPU] Datacenter AI Cluster Node / kpu_0  (via kpu-config)
+|      4 x systolic 32x32 fp32
+|      HBM3 bank      32 GiB     across 4   819.0 GB/s  10 ns
+|      L3 tile        4 MiB      across 8
+|      L2 bank        4 MiB      across 16
+|      scratchpad     1 MiB      across 4
+```
+
+**Every accelerator figure is claimed**, by a driver or by a configuration file
+— none is measured. The report says so, because the CPU rows beside it are the
+only ones produced by running code on the hardware.
+
+Requires a JSON reader; `include/ppe/json.hpp` is a minimal one written for this
+rather than a dependency taken on, with `tests/json.cpp` asserting the shapes
+kpu-sim configs actually contain and the failure modes.
+
 ### Still to build
 
 | Target | Sources |
 |---|---|
-| GPU | CUDA / HIP / Level Zero / Metal runtime queries — SM or CU counts, on-chip memory, clock domains |
-| KPU | The `kpu-sim` and `kpu-hw` interfaces — PE fabric geometry, scratchpad and L1/L2/L3 tile capacities |
+| AMD GPU attributes | ROCm/HIP or `/sys/class/kfd` topology — enumerated by PCI today, attributes not read |
+| Intel GPU attributes | Level Zero — enumerated by PCI today, attributes not read |
+| Apple GPU | Metal / IORegistry — needs Objective-C++ |
+| KPU hardware | `kpu-hw` interfaces, once a device exists to probe |
 
 Two rules keep this tractable:
 

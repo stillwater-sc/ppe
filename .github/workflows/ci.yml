@@ -206,6 +206,11 @@ jobs:
           # macOS). Small working set: this checks that it runs and attributes
           # correctly, never how fast the runner is.
           ./build/tools/tool_topology --ascii --measure --dram-mib 8
+          # Accelerator detection. No runner has a GPU or a KPU, so this
+          # exercises the ABSENCE path -- which is the common case on real
+          # machines too, and the one that must report cleanly rather than
+          # failing or printing nothing.
+          ./build/tools/tool_topology --ascii --devices
           ./build/applications/app_memory_hierarchy --min-kib 4 --max-mib 2 --no-threads
 
       - name: Run detection and sweep (Windows)
@@ -216,6 +221,7 @@ jobs:
           .\build\tools\Release\tool_topology.exe --ascii
           .\build\tools\Release\tool_topology.exe --topo-json
           .\build\tools\Release\tool_topology.exe --ascii --measure --dram-mib 8
+          .\build\tools\Release\tool_topology.exe --ascii --devices
           .\build\applications\Release\app_memory_hierarchy.exe --min-kib 4 --max-mib 2 --no-threads
 
   # -- CMakePresets.json validation ------------------------------------
