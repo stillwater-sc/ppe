@@ -40,6 +40,7 @@
 #include <ppe/harness.hpp>
 #include <ppe/platform.hpp>
 #include <ppe/probe/memory.hpp>
+#include <ppe/probe/sampler.hpp>
 #include <ppe/provenance.hpp>
 #include <ppe/trace.hpp>
 #include <ppe/version.hpp>
@@ -91,6 +92,7 @@ void print_help() {
         "      --threads N    max threads for the scaling sweep (default: hardware)\n"
         "      --line-bytes N override the cache line size (default: detected)\n"
         "      --trace PATH   write a Chrome Trace Event JSON of the sweep\n"
+        "      --profile      sample the sweep and report where the time went\n"
         "      --csv PATH     write results as CSV, with provenance comments\n"
         "      --json         emit the provenance record as JSON and exit\n"
         "      --no-threads   skip the thread scaling sweep\n"
@@ -480,6 +482,19 @@ int main(int argc, char** argv) {
     }
     std::printf("\n");
 
+    // Sampling profiler over the sweep. Off by default: it costs a perf_event
+    // ring buffer and a symbolization pass, and a measurement run should not pay
+    // for instrumentation nobody asked for.
+    const bool profiling = ppe::has_flag(argc, argv, "--profile");
+    ppe::probe::sampler prof(2000);
+    if (profiling) {
+        if (prof.ok()) {
+            prof.start();
+        } else {
+            std::printf("profile: unavailable -- %s\n\n", prof.note().c_str());
+        }
+    }
+
     std::vector<row> rows;
     const std::vector<std::size_t> sizes = sweep_sizes(min_bytes, max_bytes);
 
@@ -493,6 +508,31 @@ int main(int argc, char** argv) {
 
         std::printf("%-14s %14.2f %14.2f\n", human_size(s).c_str(), lat, bw);
         std::fflush(stdout);
+    }
+
+    if (profiling && prof.ok()) {
+        prof.stop();
+        const ppe::probe::profile_result p = prof.collect();
+        std::printf("\nProfile: %llu samples", (unsigned long long)p.samples_collected);
+        if (p.samples_lost > 0) {
+            // Never silent: a profile with invisible holes is weighted toward
+            // whatever was hottest, which is the part being read.
+            std::printf(", %llu LOST (buffer full; the profile has holes)",
+                        (unsigned long long)p.samples_lost);
+        }
+        std::printf(", %.0f%% symbolized\n", p.symbolized_fraction * 100.0);
+        std::printf("%8s  %6s  %s\n", "samples", "share", "site");
+        std::size_t shown = 0;
+        for (const ppe::probe::profile_site& site : p.sites) {
+            if (shown++ >= 8) break;
+            const double share = p.samples_collected > 0
+                                     ? 100.0 * site.samples / p.samples_collected
+                                     : 0.0;
+            std::printf("%8llu  %5.1f%%  %s\n", (unsigned long long)site.samples, share,
+                        site.symbol.empty()
+                            ? (site.module + "+0x" + std::to_string(site.offset)).c_str()
+                            : site.symbol.c_str());
+        }
     }
 
     const std::vector<knee> knees = find_knees(rows);

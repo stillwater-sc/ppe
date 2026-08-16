@@ -87,3 +87,51 @@ memory nobody read.
 
 `tests/trace.cpp` constructs several recorders in sequence and caught it on the
 first run. The fix keys the cache on a never-reused instance id.
+
+## Sampling profiler
+
+`include/ppe/probe/sampler.hpp`. The counter backend answers *how many cycles*;
+this answers *where they went*. `perf_event` delivers a sample every N cycles
+carrying the instruction pointer, and the profile is the histogram.
+
+Spans answer questions about code someone suspected; sampling answers questions
+about code nobody thought to mark, and sees leaf functions, library calls and the
+compiler's own choices.
+
+```
+$ app_memory_hierarchy --min-kib 8 --max-mib 4 --no-threads --profile
+Profile: 207 samples, 100% symbolized
+ samples   share  site
+     200   96.6%  ppe::time_median<ppe::probe::chase_latency_ns::{lambda()}>
+       3    1.4%  ppe::probe::chase_latency_ns
+```
+
+### Four ways it goes wrong
+
+**The ring buffer wraps.** Records straddle the end; reading the buffer as a
+flat array yields a record whose second half is the buffer's start — a plausible
+instruction pointer from nowhere. Every read is masked and reassembled.
+
+**Lost records are silent.** When the buffer fills the kernel drops samples and
+reports the count in `PERF_RECORD_LOST`. A profile ignoring those has invisible
+holes weighted toward whatever was hottest — the region being read.
+
+**dladdr is not symbolization.** It resolves only *dynamic* symbols. The first
+version symbolized **0%** of a normal executable and fell back to merging
+addresses by 4 KiB page — which put two functions with a deliberate 4:1 work
+ratio into a single entry and hid the ratio entirely. Coarse attribution is not
+degraded symbolization; it is a different and wrong answer. Symbols now come from
+the module's ELF `.symtab`, with the load bias derived from the `PT_LOAD` segment
+rather than assumed.
+
+**The event is bound to a PMU; the thread is not.** On a hybrid part an unpinned
+thread can migrate to a core the other PMU owns, where sampling *stops*. Measured:
+runs that migrated collected ~30 samples against ~670 pinned, and the shortfall
+fell entirely on the colder function, which vanished. The profile looked thin
+rather than broken. `collect()` now detects the crossing and says so.
+
+### It is checked against a known answer
+
+`tests/sampler.cpp` runs two functions with a 4:1 work ratio and asserts the
+profile recovers it — a far stronger check than "samples were collected", and the
+check the first version would have failed.

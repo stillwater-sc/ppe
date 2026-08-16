@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Sampling profiler (`include/ppe/probe/sampler.hpp`) on `perf_event`, with ELF
+  `.symtab` symbolization (`elf_symbols.hpp`), ring-buffer wraparound handling,
+  lost-sample reporting, and detection of thread migration across PMU domains.
+  `memory_hierarchy --profile`. Verified against a workload with a known 4:1
+  ratio.
+
 - `include/ppe/probe/fma.hpp`: measures the FMA issue width as instructions per
   cycle from hardware counters, removing the peak model's last assumed factor.
   Verified 2 on Golden Cove and 1 on Gracemont. The probe cross-checks retired

@@ -286,6 +286,11 @@ jobs:
           # reachable from outside the runner and no fixed port can collide.
           ./build-ci/applications/app_network_hierarchy --mib 4 --iters 50 --conns 4
           ./build-ci/applications/app_layer_bandwidth --threads 2 --dram-mib 8 --no-storage
+          # Runners deny perf_event, so this exercises the profiler's
+          # unavailable path -- which must report a reason rather than print an
+          # empty profile.
+          ./build-ci/applications/app_memory_hierarchy --min-kib 4 --max-mib 1 \
+              --no-threads --profile
           # HTML report must be self-contained: a report needing a network to
           # render is not a report you can keep.
           ./build-ci/tools/tool_topology --html "$RUNNER_TEMP/topo.html"
