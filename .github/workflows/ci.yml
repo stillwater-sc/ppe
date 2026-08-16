@@ -20,6 +20,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Catches a platform API used without the header that declares it. Three
+      # commits have shipped that mistake and each broke only on Windows, which
+      # cannot be reproduced on the machine this is developed on.
+      - name: Check platform includes
+        run: python3 tools/lint/platform_includes.py
+
       - name: Check for non-ASCII characters in source
         run: |
           # grep -l exits 0 (matches), 1 (no matches), >1 (execution error).

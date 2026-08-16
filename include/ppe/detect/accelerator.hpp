@@ -35,13 +35,26 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <vector>
 
+// The vendor runtime is opened at run time, which needs the platform's dynamic
+// loader header on EVERY platform that has a path below -- Windows included.
+// Omitting the Windows branch here is what broke both Windows jobs; see
+// tools/lint/platform_includes.py.
 #if defined(__linux__) || defined(__APPLE__)
 #  include <dlfcn.h>
+#elif defined(_WIN32)
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  ifndef NOMINMAX
+#    define NOMINMAX
+#  endif
+#  include <windows.h>
 #endif
 
 namespace ppe {
